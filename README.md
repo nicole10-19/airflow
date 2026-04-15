@@ -4,7 +4,7 @@ Questa pipeline utilizza Apache Airflow (via Docker Compose) per simulare, proce
 
 ## Avvio
 1. Clona o scarica questa cartella sul tuo PC.
-2. Da terminale, posizionati nella cartella `airflow` e lancia:
+2. Da terminale, posizionarsi nella cartella `airflow` e lanciare:
    ```powershell
    docker compose up --build
    ```
