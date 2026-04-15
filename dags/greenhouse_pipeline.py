@@ -82,6 +82,8 @@ def clean_data(**kwargs):
 
 def anomaly_detection(**kwargs):
     ti = kwargs['ti']
+
+    # Recupero i parametri puliti e analizzo ogni parametro separatamente
     data = ti.xcom_pull(task_ids='clean_data', key="clean_df")
     df = pd.read_json(data)
 
@@ -91,10 +93,11 @@ def anomaly_detection(**kwargs):
     result = []
 
     for param in parameters:
+        #Prende solo i dati di quel parametro 
         df_param = df[df["parameter_name"] == param].copy()
         df_param = df_param.dropna(subset=['value'])
 
-        # DBSCAN non ha senso statistico sotto i 5 punti
+        # Evito di applicare DBSCAN su dataset troppo piccoli 
         if len(df_param) < 5:
             log.warning(f"Parametro '{param}': soli {len(df_param)} record, skippato")
             continue
@@ -102,7 +105,7 @@ def anomaly_detection(**kwargs):
         scaler = StandardScaler()
         normalized_values = scaler.fit_transform(df_param[['value']])
 
-        # Varianza zero (es. ph_level con misurazioni identiche) → NaN dopo scaling
+        # Se tutti i valori sono uguali, la varianza è zero e quindi DBSCAN non funziona 
         if pd.isna(normalized_values).any():
             log.warning(f"Parametro '{param}': varianza zero, skippato")
             continue
@@ -112,6 +115,7 @@ def anomaly_detection(**kwargs):
         dbscan = DBSCAN(eps=0.5, min_samples=3)
         labels = dbscan.fit_predict(df_param[['value_normalized']])
 
+        #Definito True se DBSCAN considera il punto un outlier 
         df_param['anomaly_detected_by_dbscan'] = (labels == -1)
         df_param['confidence_score'] = 0.0
 
@@ -136,7 +140,7 @@ def anomaly_detection(**kwargs):
 def save_results(**kwargs):
     ti = kwargs['ti']
 
-    # Recupera i tre DataFrame dai task precedenti
+    # Recupera i dati elaborati e quelli scartati, prepara i DataFrame finali e la connessione  al DB 
     df_processed  = pd.read_json(ti.xcom_pull(task_ids='anomaly_detection', key="anomaly_df"))
     df_discarded   = pd.read_json(ti.xcom_pull(task_ids='clean_data',        key="discarded_df"))
 
@@ -146,25 +150,21 @@ def save_results(**kwargs):
                     'anomaly', 'anomaly_detected_by_dbscan', 'confidence_score']
 
     # --- Tabella 1: dati sani ---
-    # Record processati da DBSCAN che non sono stati marcati come anomalia
     df_clean_out = df_processed[~df_processed['anomaly_detected_by_dbscan']][columns_base].copy()
 
     # --- Tabella 2: anomalie ---
-    # Record marcati come anomalia da DBSCAN oppure già flaggati dal simulatore
     df_anomalies = df_processed[
         df_processed['anomaly_detected_by_dbscan'] | df_processed['anomaly']
     ][columns_base].copy()
 
     # --- Tabella 3: scartati ---
-    # Record eliminati durante il cleaning per campi mancanti/non validi
-    # La colonna 'discard_reason' spiega il motivo dello scarto
     discard_cols = ['id_sensor', 'day_time', 'parameter_name', 'value', 'discard_reason']
-    # Ci assicuriamo che tutte le colonne esistano anche se il df è vuoto
     for col in discard_cols:
         if col not in df_discarded.columns:
             df_discarded[col] = None
     df_discarded_out = df_discarded[discard_cols].copy()
 
+    #Scrittura dei risultati finali nel databse e gestione degli errori 
     try:
         df_clean_out.to_sql(
             'sensor_measurements_clean',
