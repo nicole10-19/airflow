@@ -31,28 +31,4 @@ Questa pipeline utilizza Apache Airflow (via Docker Compose) per simulare, proce
 - I dati vengono salvati su Postgres in tre tabelle: `sensor_measurements_clean`, `sensor_measurements_anomalies`, `sensor_measurements_discarded`.
 
 
-## Struttura della repository
-
-```text
-airflow/
-├── docker-compose.yaml
-├── init-db.sql
-├── README.md
-├── requirements.txt
-├── dags/
-│   ├── greenhouse_pipeline.py
-│   ├── sensor_simulator.py
-│   ├── sensori.csv
-│   └── __pycache__/
-│       ├── greenhouse_pipeline.cpython-37.pyc
-│       ├── greenhouse_pipeline.cpython-38.pyc
-│       ├── sensor_simulator.cpython-37.pyc
-│       ├── sensor_simulator.cpython-38.pyc
-│       └── sss.cpython-37.pyc
-├── logs/
-│   ├── dag_id=greenhouse_pipeline/
-│   ├── dag_processor_manager/
-│   │   └── dag_processor_manager.log
-│   └── scheduler/
-└── plugins/
 
