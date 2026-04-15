@@ -2,63 +2,71 @@ from airflow import DAG
 from airflow.operators.python import PythonOperator
 from datetime import datetime
 import sys
-import logging
-import pandas as pd
+import logging  
+import pandas as pd 
 from sqlalchemy import create_engine
 from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import StandardScaler
 
-# Path assoluto — necessario per import stabile nel Celery worker
-sys.path.insert(0, '/opt/airflow/dags')
+
+sys.path.insert(0, '/opt/airflow/dags') 
 
 from sensor_simulator import run
 
-log = logging.getLogger(__name__)
+log = logging.getLogger(__name__) 
 
-DB_CONN = 'postgresql+psycopg2://airflow:airflow@postgres:5432/greenhouse_db'
+DB_CONN = 'postgresql+psycopg2://airflow:airflow@postgres:5432/greenhouse_db' # Stringa di connessione a PostgreSQL 
 
 
 def generate_data():
-    run()
+    # Chiamata a run() che genera (o aggiorna) il file sensori.csv con nuove misurazioni 
+    run() 
 
 
 def load_data():
+
+    # La funzione legge il CSV generato dal simulatore e ritorna il DataFrame in formato JSON
+    # così che Airflow può passarlo alla task successiva
     df = pd.read_csv("/opt/airflow/dags/sensori.csv", sep=";")
     log.info(f"Caricati {len(df)} record dal CSV")
-    return df.to_json()
+    return df.to_json() 
 
 
+    # NB: viene utilizzato '**kwargs' perchè la funzione può ricevere un numero variabile di argomenti
 def clean_data(**kwargs):
-    ti = kwargs['ti']
-    data = ti.xcom_pull(task_ids='load_data')
-    df = pd.read_json(data)
+
+    ti = kwargs['ti'] 
+
+    # Recupera i dati letti dal CSV
+    data = ti.xcom_pull(task_ids='load_data') 
+    df = pd.read_json(data) 
 
     righe_iniziali = len(df)
 
-    # --- Identifica i record da scartare completamente ---
-    # Scartiamo le righe dove mancano campi critici: timestamp o valore.
-    # Questi finiscono nella tabella 'discarded' per tracciabilità.
+
+    #  Scarta le righe senza valore o senza timestamps, in quanto non utilizzabili 
     mask_scartati = df["value"].isna() | (df["value"] == "null") | \
                     df["day_time"].isna() | (df["day_time"] == "null")
 
-    df_discarded = df[mask_scartati].copy()
+    df_discarded = df[mask_scartati].copy() 
     df_discarded["discard_reason"] = "missing_value_or_timestamp"
 
-    # --- Dati che proseguono nella pipeline ---
     df_clean = df[~mask_scartati].copy()
 
-    # Conversione a float con coerce: eventuali valori non convertibili
-    # diventano NaN e vengono scartati con una seconda passata
+    
+    # Conversionein float, se un valore non è convertibile lo trasforma in NaN  e identifica valori non numerici 
     df_clean["value"] = pd.to_numeric(df_clean["value"], errors="coerce")
     mask_non_numerici = df_clean["value"].isna()
+
+
     if mask_non_numerici.any():
+
+        # Aggiunge gli scarti agli altri e rimuove i non numerici dai dati puliti
         extra_scartati = df_clean[mask_non_numerici].copy()
         extra_scartati["discard_reason"] = "non_numeric_value"
         df_discarded = pd.concat([df_discarded, extra_scartati], ignore_index=True)
         df_clean = df_clean[~mask_non_numerici]
 
-    # Politica placeholder: se manca l'id sensore ma il dato è valido,
-    # lo conserviamo con id UNKNOWN invece di scartarlo
     df_clean["id_sensor"] = df_clean["id_sensor"].replace("null", "UNKNOWN")
     df_clean["id_sensor"] = df_clean["id_sensor"].fillna("UNKNOWN")
 
@@ -67,7 +75,7 @@ def clean_data(**kwargs):
         f"{len(df_clean)} validi, {len(df_discarded)} scartati"
     )
 
-    # Passiamo entrambi i DataFrame via XCom
+    # Passa sia i dati puliti che quelli scartati alla task successiva 
     ti.xcom_push(key="clean_df",     value=df_clean.to_json())
     ti.xcom_push(key="discarded_df", value=df_discarded.to_json())
 
@@ -138,7 +146,7 @@ def save_results(**kwargs):
                     'anomaly', 'anomaly_detected_by_dbscan', 'confidence_score']
 
     # --- Tabella 1: dati sani ---
-    # Record processati da DBSCAN che NON sono stati marcati come anomalia
+    # Record processati da DBSCAN che non sono stati marcati come anomalia
     df_clean_out = df_processed[~df_processed['anomaly_detected_by_dbscan']][columns_base].copy()
 
     # --- Tabella 2: anomalie ---
@@ -151,7 +159,7 @@ def save_results(**kwargs):
     # Record eliminati durante il cleaning per campi mancanti/non validi
     # La colonna 'discard_reason' spiega il motivo dello scarto
     discard_cols = ['id_sensor', 'day_time', 'parameter_name', 'value', 'discard_reason']
-    # Assicuriamoci che tutte le colonne esistano anche se il df è vuoto
+    # Ci assicuriamo che tutte le colonne esistano anche se il df è vuoto
     for col in discard_cols:
         if col not in df_discarded.columns:
             df_discarded[col] = None
