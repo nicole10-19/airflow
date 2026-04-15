@@ -29,6 +29,3 @@ Questa pipeline utilizza Apache Airflow (via Docker Compose) per simulare, proce
 
 
 - I dati vengono salvati su Postgres in tre tabelle: `sensor_measurements_clean`, `sensor_measurements_anomalies`, `sensor_measurements_discarded`.
-
-
-
