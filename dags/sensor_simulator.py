@@ -8,30 +8,59 @@ import pandas as pd
 start = datetime.datetime(2026, 1, 1, 23, 0, 0)  # timestamp iniziale
 
 # Di seguito troviamo i vari range attribuiti ai sensori 
-ranges = {
-    "temperature": (15, 26.9),
+# Range per il GIORNO (6:00 - 22:00)
+ranges_day = {
+    "temperature": (18, 26.9),
     "humidity": (60, 70),
     "CO2_level": (600, 1200),
     "ventilation": (0.5, 1),
     "ph_level": (6, 7)
-} 
+}
 
-ranges_high = {
-    "temperature": (27, 33), 
-    "humidity": (70.1, 80),     
-    "CO2_level": (1201, 1300),  
-    "ventilation": (1.1, 2),   
-    "ph_level": (7.1,10),  
-} 
+# Range per la NOTTE (22:00 - 6:00)
+ranges_night = {
+    "temperature": (10, 16),
+    "humidity": (65, 75),
+    "CO2_level": (700, 1100),
+    "ventilation": (0.2, 0.6),
+    "ph_level": (6.2, 6.8)
+}
 
-ranges_low = {
-    "temperature":(-2, 14.9),  
-    "humidity": (0, 59.9),    
-    "CO2_level": (200, 599),    
-    "ventilation": (0, 0.49),   
-    "ph_level": (2,5.9),
-} 
+# Range ALTO per il GIORNO
+ranges_high_day = {
+    "temperature": (27, 33),
+    "humidity": (70.1, 80),
+    "CO2_level": (1201, 1300),
+    "ventilation": (1.1, 2),
+    "ph_level": (7.1, 10)
+}
 
+# Range ALTO per la NOTTE
+ranges_high_night = {
+    "temperature": (17, 22),
+    "humidity": (76, 85),
+    "CO2_level": (1100, 1250),
+    "ventilation": (0.7, 1.2),
+    "ph_level": (7.0, 7.5)
+}
+
+# Range BASSO per il GIORNO
+ranges_low_day = {
+    "temperature": (-2, 14.9),
+    "humidity": (0, 59.9),
+    "CO2_level": (200, 599),
+    "ventilation": (0, 0.49),
+    "ph_level": (2, 5.9)
+}
+
+# Range BASSO per la NOTTE
+ranges_low_night = {
+    "temperature": (5, 9.9),
+    "humidity": (40, 64.9),
+    "CO2_level": (300, 699),
+    "ventilation": (0, 0.19),
+    "ph_level": (3, 6.0)
+}
 
 def random_mis(min_val, max_val):
     
@@ -67,13 +96,13 @@ def generate_meas(sensor, p, start):
     return measurement
 
 
-def outlier_meas(sensor, p, start):
+def outlier_meas(sensor, p, start, outlier_high_prob=0.5):
 
     # Genera valori outlier con una probabilità del 50% per valori sopra al range ottimale e una probabilità del 50% 
     # per valori sotto al range ottimale. Il caso del livello di CO2 viene separato dagli altri con la stessa logica della funzione precedente.
 
     # Anomaly è impostato a true in quanto si è verificato un 'errore' da parte del sensore
-    if random.random()< 0.5:
+    if random.random()< outlier_high_prob:
 
         if p == "CO2_level":
             measurement = {
@@ -149,7 +178,7 @@ greenhouses = {
 
 # Creazione di un dizionario che imposta uno start_time uguale per tutti i sensori, che poi 
 # verrà aggiornato man mano che verranno registrate le misurazioni del singolo sensore 
-def run(): 
+def run(outlier_rate=0.05, null_rate=0.02, outlier_high_prob=0.5, scale_factor=1.0, output_path="sensori.csv"): 
     timestamps= {}
 
     for greenhouse in greenhouses.values():
@@ -165,13 +194,14 @@ def run():
 
     for key_val, value_val in greenhouses.items():
         for id_sensor, [parametro, intervallo, n_misurazioni] in value_val.items():
-            for i in range(n_misurazioni):
-                # 5% di probabilità di generare valori anomali 
-                if random.random() < 0.05:
-                    misurazioni.append(outlier_meas(id_sensor, parametro, timestamps[id_sensor]))
+            n_misurazioni_scaled= int(n_misurazioni* scale_factor)
+            for i in range(n_misurazioni_scaled):
+                rand_val= random.random() # Unica estrazione 
+                
+                if rand_val < outlier_rate:
+                    misurazioni.append(outlier_meas(id_sensor, parametro, timestamps[id_sensor], outlier_high_prob))
 
-                    #2% di probabilità di generare un valore nullo 
-                elif random.random() < 0.02:
+                elif rand_val < (outlier_rate + null_rate):
                     misurazioni.append(null_meas(id_sensor, parametro, timestamps[id_sensor]))
                 else:
                     misurazioni.append(generate_meas(id_sensor, parametro, timestamps[id_sensor]))
@@ -188,5 +218,5 @@ def run():
     # Salva misurazioni in un file csv in ordine cronologico e separando con una ',' i valori.
     # Ogni riga conterrà una misurazione di un sensore 
     df = pd.DataFrame(misurazioni).sort_values(by= ("day_time"))
-    df.to_csv("/opt/airflow/dags/sensori.csv", index=False, sep=";")
+    df.to_csv(output_path, index=False, sep=";")
     pass
