@@ -38,7 +38,7 @@ pct = (anomalie / len(df)) * 100
 print(f"Anomalie: {anomalie} ({pct:.1f}%)")
 print()
 
-print("✅ Tutti i test completati!")
+print("Tutti i test completati!")
 
 # Pulisci i file di test
 for f in ["test_output1.csv", "test_output2.csv", "test_output3.csv", "test_output4.csv"]:

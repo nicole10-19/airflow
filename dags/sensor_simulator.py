@@ -69,7 +69,7 @@ def random_mis(min_val, max_val):
     result = random.uniform(min_val, max_val)
     return round(result, 3)
 
-def generate_meas(sensor, p, start):
+def generate_meas(sensor, p, start, is_night=False):
     # NB: Un caso particolare nei sensori è il livello di CO2, che permette di avere solo risultati interi, 
     #   in quanto la misurazione viene fatta in ppm (Parti per milione).
     
@@ -77,12 +77,18 @@ def generate_meas(sensor, p, start):
     #  il nome del parametro che va a verificare il valore del parametro e anomaly impostato a False perché viene passato ranges[p] 
     # (ovvero i range con le misurazioni ottimali). L'asterisco prima di ranges[p] permette di dividere i valori, in due valori separati
 
+    if is_night:
+        range_to_use = ranges_night[p]
+    else:
+        range_to_use = ranges_day[p]
+    
+
     if p == "CO2_level":
         measurement = {
         "id_sensor": sensor,
         "day_time": start,
         "parameter_name": p,
-        "value" : int(random_mis(*ranges[p])),
+        "value" : int(random_mis(*range_to_use[p])),
         "anomaly": False
     }
     else:
@@ -90,18 +96,26 @@ def generate_meas(sensor, p, start):
         "id_sensor": sensor,
         "day_time": start,
         "parameter_name": p,
-        "value" : random_mis(*ranges[p]),
+        "value" : random_mis(*range_to_use[p]),
         "anomaly": False
         }
     return measurement
 
 
-def outlier_meas(sensor, p, start, outlier_high_prob=0.5):
+def outlier_meas(sensor, p, start, outlier_high_prob=0.5, is_night=False):
 
     # Genera valori outlier con una probabilità del 50% per valori sopra al range ottimale e una probabilità del 50% 
     # per valori sotto al range ottimale. Il caso del livello di CO2 viene separato dagli altri con la stessa logica della funzione precedente.
 
     # Anomaly è impostato a true in quanto si è verificato un 'errore' da parte del sensore
+    if is_night:
+        range_high = ranges_high_night[p]
+        range_low = ranges_low_night[p]
+    else:
+        range_high = ranges_high_day[p]
+        range_low = ranges_low_day[p]
+
+
     if random.random()< outlier_high_prob:
 
         if p == "CO2_level":
@@ -109,7 +123,7 @@ def outlier_meas(sensor, p, start, outlier_high_prob=0.5):
             "id_sensor": sensor,
             "day_time": start,
             "parameter_name": p,
-            "value" : int(random_mis(*ranges_high[p])),
+            "value" : int(random_mis(*range_high[p])),
             "anomaly": True
         }
         else:
@@ -117,7 +131,7 @@ def outlier_meas(sensor, p, start, outlier_high_prob=0.5):
             "id_sensor": sensor,
             "day_time": start,
             "parameter_name": p,
-            "value" : random_mis(*ranges_high[p]),
+            "value" : random_mis(*range_high[p]),
             "anomaly": True
             }
     else:
@@ -126,7 +140,7 @@ def outlier_meas(sensor, p, start, outlier_high_prob=0.5):
             "id_sensor": sensor,
             "day_time": start,
             "parameter_name": p,
-            "value" : int(random_mis(*ranges_low[p])),
+            "value" : int(random_mis(*range_low[p])),
             "anomaly": True
         }
         else:
@@ -134,7 +148,7 @@ def outlier_meas(sensor, p, start, outlier_high_prob=0.5):
             "id_sensor": sensor,
             "day_time": start,
             "parameter_name": p,
-            "value" : random_mis(*ranges_low[p]),
+            "value" : random_mis(*range_low[p]),
             "anomaly": True
             }
     return measurement
@@ -196,15 +210,17 @@ def run(outlier_rate=0.05, null_rate=0.02, outlier_high_prob=0.5, scale_factor=1
         for id_sensor, [parametro, intervallo, n_misurazioni] in value_val.items():
             n_misurazioni_scaled= int(n_misurazioni* scale_factor)
             for i in range(n_misurazioni_scaled):
+                ora = timestamps[id_sensor].hour
+                is_night = (ora < 6) or (ora >= 22) 
                 rand_val= random.random() # Unica estrazione 
                 
                 if rand_val < outlier_rate:
-                    misurazioni.append(outlier_meas(id_sensor, parametro, timestamps[id_sensor], outlier_high_prob))
+                    misurazioni.append(outlier_meas(id_sensor, parametro, timestamps[id_sensor], outlier_high_prob, is_night))
 
                 elif rand_val < (outlier_rate + null_rate):
                     misurazioni.append(null_meas(id_sensor, parametro, timestamps[id_sensor]))
                 else:
-                    misurazioni.append(generate_meas(id_sensor, parametro, timestamps[id_sensor]))
+                    misurazioni.append(generate_meas(id_sensor, parametro, timestamps[id_sensor], is_night))
 
                 # Aggiorna il timestamps del sensore che ha appena effettuato la misurazione
                 timestamps[id_sensor] = timestamps[id_sensor] + datetime.timedelta(seconds= intervallo)
