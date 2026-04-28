@@ -9,7 +9,7 @@ from sqlalchemy import create_engine
 from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import StandardScaler
 import os
-
+from sklearn.ensemble import IsolationForest
 
 sys.path.insert(0, '/opt/airflow/dags') 
 
@@ -18,6 +18,16 @@ from sensor_simulator import run
 log = logging.getLogger(__name__) 
 
 DB_CONN = 'postgresql+psycopg2://airflow:airflow@postgres:5432/greenhouse_db' # Stringa di connessione a PostgreSQL 
+
+
+def calc_performance_metrics(tp, fp, fn):
+    precision = tp / (tp +fp ) if (tp + fp ) >0 else 0.0 
+
+    recall = tp / (tp + fn) if (tp + fp) >0 else 0.0
+
+    f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+    
+    return precision, recall, f1 
 
 
 def generate_data():
@@ -82,51 +92,76 @@ def clean_data(**kwargs):
     ti.xcom_push(key="discarded_df", value=df_discarded.to_json())
 
 
+
+
 def anomaly_detection(**kwargs):
-    start_time= time.time()
+    start_time = time.time()
     ti = kwargs['ti']
 
-    # Recupero i parametri puliti e analizzo ogni parametro separatamente
+    # 1. Recupero i dati puliti da XCom
     data = ti.xcom_pull(task_ids='clean_data', key="clean_df")
     df = pd.read_json(data)
-
     df['value'] = df['value'].astype(float)
+
+    # 2. Inizializzazione statistiche per il confronto (Ground Truth)
+    stats = {
+        'dbscan':  {'tp': 0, 'fp': 0, 'fn': 0},
+        'iforest': {'tp': 0, 'fp': 0, 'fn': 0}
+    }
 
     parameters = df["parameter_name"].unique()
     result = []
 
     for param in parameters:
-        #Prende solo i dati di quel parametro 
+        # Prende solo i dati di quel parametro 
         df_param = df[df["parameter_name"] == param].copy()
         df_param = df_param.dropna(subset=['value'])
 
-        # Evito di applicare DBSCAN su dataset troppo piccoli 
+        # Evito di applicare algoritmi su dataset troppo piccoli 
         if len(df_param) < 5:
             log.warning(f"Parametro '{param}': soli {len(df_param)} record, skippato")
             continue
 
         scaler = StandardScaler()
-        normalized_values = scaler.fit_transform(df_param[['value']])
+        # Nota: usiamo [[ ]] per evitare i warning di feature names con Isolation Forest
+        df_param['value_normalized'] = scaler.fit_transform(df_param[['value']])
 
-        # Se tutti i valori sono uguali, la varianza è zero e quindi DBSCAN non funziona 
-        if pd.isna(normalized_values).any():
-            log.warning(f"Parametro '{param}': varianza zero, skippato")
-            continue
-
-        df_param['value_normalized'] = normalized_values
-
+        # --- ALGORITMO 1: DBSCAN ---
         dbscan = DBSCAN(eps=0.5, min_samples=3)
-        labels = dbscan.fit_predict(df_param[['value_normalized']])
+        # Il nome della colonna deve corrispondere a quello usato nel DB e nei log
+        df_param['anomaly_detected_by_dbscan'] = (dbscan.fit_predict(df_param[['value_normalized']]) == -1)
 
-        #Definito True se DBSCAN considera il punto un outlier 
-        df_param['anomaly_detected_by_dbscan'] = (labels == -1)
+        # --- ALGORITMO 2: ISOLATION FOREST ---
+        iso_forest = IsolationForest(contamination=0.05, random_state=42)
+        df_param['anomaly_iforest'] = (iso_forest.fit_predict(df_param[['value_normalized']]) == -1)
+
+        # --- 3. CONFRONTO CON GROUND TRUTH (Colonna 'anomaly' del simulatore) ---
+        for idx, row in df_param.iterrows():
+            real = bool(row['anomaly'])
+
+            # Statistiche DBSCAN (corretto refuso dbascan)
+            if real and row['anomaly_detected_by_dbscan']: 
+                stats['dbscan']['tp'] += 1
+            elif not real and row['anomaly_detected_by_dbscan']: 
+                stats['dbscan']['fp'] += 1
+            elif real and not row['anomaly_detected_by_dbscan']:
+                stats['dbscan']['fn'] += 1
+            
+            # Statistiche Isolation Forest
+            if real and row['anomaly_iforest']:
+                stats['iforest']['tp'] += 1
+            elif not real and row['anomaly_iforest']:
+                stats['iforest']['fp'] += 1
+            elif real and not row['anomaly_iforest']:
+                stats['iforest']['fn'] += 1 
+
+        # Aggiungiamo i metadati richiesti dal DB (anche se fissi)
         df_param['confidence_score'] = 0.0
-
-        if 'anomaly' not in df_param.columns:
-            df_param['anomaly'] = False
-
-        n_anomalie = df_param['anomaly_detected_by_dbscan'].sum()
-        log.info(f"Parametro '{param}': {len(df_param)} record, {n_anomalie} anomalie DBSCAN")
+        
+        # Log dei risultati per questo parametro
+        n_db = df_param['anomaly_detected_by_dbscan'].sum()
+        n_if = df_param['anomaly_iforest'].sum()
+        log.info(f"Parametro '{param}': record={len(df_param)}, DBSCAN={n_db}, I-Forest={n_if}")
 
         result.append(df_param)
 
@@ -134,162 +169,104 @@ def anomaly_detection(**kwargs):
         log.error("Nessun parametro processato — controlla il CSV.")
         raise ValueError("anomaly_detection: nessun dato disponibile dopo il filtraggio")
 
+    # Uniamo tutti i parametri in un unico DataFrame
     df_final = pd.concat(result, ignore_index=True)
 
-    tp= 0 # True positive
-    fp=0 # False positive
-    fn=0 # False negative
+    # 4. CALCOLO METRICHE FINALI (usando la funzione esterna calc_performance_metrics)
+    p_db, r_db, f1_db = calc_performance_metrics(stats['dbscan']['tp'], stats['dbscan']['fp'], stats['dbscan']['fn'])
+    p_if, r_if, f1_if = calc_performance_metrics(stats['iforest']['tp'], stats['iforest']['fp'], stats['iforest']['fn'])
 
+    execution_time = time.time() - start_time
 
-    for idx, row in df_final.iterrows(): # Per ogni riga del DataFrame
-
-        #Estrai i due valori che servono 
-
-        is_anomaly_real = (row['anomaly'] == True) or (row['anomaly'] == True) # Controlla se il campo anomaly è True
-        is_anomaly_detected = row['anomaly_detected_by_dbscan'] # Estrae il risultato di DBSCAN 
-
-
-        #Confronta i due risultati e conta
-        if is_anomaly_real and is_anomaly_detected:
-            tp += 1
-        elif not is_anomaly_real and is_anomaly_detected:
-            fp +=1
-        elif is_anomaly_real and not is_anomaly_detected:
-            fn += 1
-    
-    if (tp+fp)>0: 
-        precision = tp/ (tp+fp) # Maggiore è la percentuale di 'precision' , più DBSCAN è sensibile e marchia tutto come anomalia
-    else:
-        precision = 0.0
-    
-    if(tp+fn) >0:
-        recall = tp/ (tp+fn) # Più il valore di 'recall' è alto, più DBSCAN non segnale quasi nessuna anomalia 
-    else:
-        recall= 0.0
-    
-    if (precision + recall) >0:
-        f1= 2* (precision *recall) /(precision +recall) # Calcolo di una media armonica che penalizza i modelli squilibrati
-    else:
-        f1= 0.0
-    
-    log.info(f"Metriche: TP={tp}, FP={fp}, FN={fn}, Precision={precision:.3f}, Recall={recall:.3f}, F1={f1:.3f}")
-
-    end_time = time.time()
-    execution_time = end_time -start_time
-
-    metrics={
+    # Prepariamo il pacchetto metriche da passare a save_results
+    metrics_summary = {
         "execution_time": execution_time,
-        "true_positive": tp,
-        "false_positive": fp,
-        "false_negatives": fn,
-        "precision": precision,
-        "recall" : recall,
-        "f1_score": f1
+        "dbscan": {
+            "tp": stats['dbscan']['tp'], "fp": stats['dbscan']['fp'], "fn": stats['dbscan']['fn'],
+            "precision": p_db, "recall": r_db, "f1_score": f1_db
+        },
+        "iforest": {
+            "tp": stats['iforest']['tp'], "fp": stats['iforest']['fp'], "fn": stats['iforest']['fn'],
+            "precision": p_if, "recall": r_if, "f1_score": f1_if
+        }
     }
-    # Passa i risultati al task successivo via XCom
 
+    # Passiamo i risultati al task successivo via XCom
     ti.xcom_push(key="anomaly_df", value=df_final.to_json())
+    ti.xcom_push(key="metrics", value=metrics_summary)
 
-    ti.xcom_push(key = "metrics", value={
-            "execution_time": execution_time,
-        "true_positives": tp,
-        "false_positives": fp,
-        "false_negatives": fn,
-        "precision": precision,
-        "recall": recall,
-        "f1_score": f1
-    })
-
+    log.info(f"Analisi completata in {execution_time:.2f}s. DBSCAN F1: {f1_db:.3f}, I-Forest F1: {f1_if:.3f}")
 
 def save_results(**kwargs):
     ti = kwargs['ti']
 
-    # Recupera i dati elaborati e quelli scartati, prepara i DataFrame finali e la connessione  al DB 
-    df_processed  = pd.read_json(ti.xcom_pull(task_ids='anomaly_detection', key="anomaly_df"))
-    df_discarded   = pd.read_json(ti.xcom_pull(task_ids='clean_data',        key="discarded_df"))
-
-
-    metrics = ti.xcom_pull(task_ids= 'anomaly_detection', key='metrics')
+    # Recupero dati e metriche da XCom
+    df_processed = pd.read_json(ti.xcom_pull(task_ids='anomaly_detection', key="anomaly_df"))
+    df_discarded = pd.read_json(ti.xcom_pull(task_ids='clean_data', key="discarded_df"))
+    metrics = ti.xcom_pull(task_ids='anomaly_detection', key='metrics')
+    
     engine = create_engine(DB_CONN)
 
+    # Colonne base per le tabelle dei sensori
     columns_base = ['id_sensor', 'day_time', 'parameter_name', 'value',
                     'anomaly', 'anomaly_detected_by_dbscan', 'confidence_score']
 
-    # --- Tabella 1: dati sani ---
-    df_clean_out = df_processed[~df_processed['anomaly_detected_by_dbscan']][columns_base].copy()
-
-    # --- Tabella 2: anomalie ---
-    df_anomalies = df_processed[
-        df_processed['anomaly_detected_by_dbscan'] | df_processed['anomaly']
-    ][columns_base].copy()
-
-    # --- Tabella 3: scartati ---
-    discard_cols = ['id_sensor', 'day_time', 'parameter_name', 'value', 'discard_reason']
-    for col in discard_cols:
-        if col not in df_discarded.columns:
-            df_discarded[col] = None
-    df_discarded_out = df_discarded[discard_cols].copy()
-
-    #Scrittura dei risultati finali nel databse e gestione degli errori 
+    # --- Salvataggio Tabelle Sensori ---
     try:
-        df_clean_out.to_sql(
-            'sensor_measurements_clean',
-            engine, if_exists='append', index=False
-        )
-        log.info(f"Salvati {len(df_clean_out)} record sani")
+        # Tabella 1 Dati sani 
+        df_clean_out = df_processed[~df_processed['anomaly_detected_by_dbscan']][columns_base].copy()
+        df_clean_out.to_sql('sensor_measurements_clean', engine, if_exists='append', index=False)
 
-        df_anomalies.to_sql(
-            'sensor_measurements_anomalies',
-            engine, if_exists='append', index=False
-        )
-        log.info(f"Salvate {len(df_anomalies)} anomalie")
+        # Tabella 2 Anomalie
+        df_anomalies = df_processed[
+            df_processed['anomaly_detected_by_dbscan'] | df_processed['anomaly']
+        ][columns_base].copy()
+        df_anomalies.to_sql('sensor_measurements_anomalies', engine, if_exists='append', index=False)
 
-        df_discarded_out.to_sql(
-            'sensor_measurements_discarded',
-            engine, if_exists='append', index=False
-        )
-        log.info(f"Salvati {len(df_discarded_out)} record scartati")
-
+        # Tabella 3 Scartati
+        discard_cols = ['id_sensor', 'day_time', 'parameter_name', 'value', 'discard_reason']
+        df_discarded_out = df_discarded[discard_cols].copy()
+        df_discarded_out.to_sql('sensor_measurements_discarded', engine, if_exists='append', index=False)
+        
+        log.info("Dati dei sensori salvati correttamente nelle 3 tabelle.")
     except Exception as e:
-        log.error(f"Errore salvataggio PostgreSQL: {e}")
+        log.error(f"Errore salvataggio tabelle sensori: {e}")
         raise
 
-    #Salvataggio metriche in PostgreSQL
-
     if metrics is not None:
-        df_metrics = pd.DataFrame([{
-            'execution_date': datetime.now(),
-            'task_name': 'anomaly_detection',
-            'execution_time': metrics['execution_time'],
-            'true_positives': metrics['true_positives'],
-            'false_positives': metrics['false_positives'],
-            'false_negatives': metrics['false_negatives'],
-            'precision': metrics['precision'],
-            'recall': metrics['recall'],
-            'f1_score': metrics['f1_score']
-        }])
-    
-    try:
-        df_metrics.to_sql('metrics_log', engine, if_exists='append', index= False)
-        log.info(f"metriche salvate in PostgreSQL: TP={metrics['true_positives']}, F1={metrics['f1_score']:.3f}")
-    except Exception as e:
-        log.error(f"Errore salvataggio metriche PostgreSQL: {e}")
-    
-
-    #Salvataggio metriche in CSV
-    csv_path= "/opt/airflow/dags/metrics.csv"
-
-    try:
-        if os.path.exists(csv_path):
-            df_existing =pd.read_csv(csv_path)
-            df_metrics= pd.concat([df_existing, df_metrics], ignore_index = True)
+        rows_metrics = []
+        for algo_key in ['dbscan', 'iforest']:
+            m = metrics[algo_key]
+            rows_metrics.append({
+                'execution_date': datetime.now(),
+                'algorithm_name': 'DBSCAN' if algo_key == 'dbscan' else 'IsolationForest',
+                'execution_time': metrics['execution_time'],
+                'true_positives': m['tp'],
+                'false_positives': m['fp'],
+                'false_negatives': m['fn'],
+                'precision': m['precision'],
+                'recall': m['recall'],
+                'f1_score': m['f1_score']
+            })
         
-        df_metrics.to_csv(csv_path, index= False, sep=";")
-        log.info(f"Metriche salvate in CSV: {csv_path}")
-    except Exception as e:
-        log.error(f"Errore salvataggio metriche in csv: {e}")
-    
+        df_metrics = pd.DataFrame(rows_metrics)
 
+        # Salvataggio su PostgreSQL
+        try:
+            df_metrics.to_sql('metrics_log', engine, if_exists='append', index=False)
+            log.info("Metriche comparative salvate in PostgreSQL (2 righe).")
+        except Exception as e:
+            log.error(f"Errore salvataggio metriche PostgreSQL: {e}")
+
+        # Salvataggio su CSV 
+        csv_path = "/opt/airflow/dags/metrics.csv"
+        try:
+            if os.path.exists(csv_path):
+                df_existing = pd.read_csv(csv_path, sep=";")
+                df_metrics = pd.concat([df_existing, df_metrics], ignore_index=True)
+            df_metrics.to_csv(csv_path, index=False, sep=";")
+        except Exception as e:
+            log.error(f"Errore salvataggio CSV metriche: {e}")
 with DAG(
     dag_id="greenhouse_pipeline",
     start_date=datetime(2026, 1, 1),

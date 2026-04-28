@@ -1,2 +1,4 @@
-execution_date;task_name;execution_time;true_positives;false_positives;false_negatives;precision;recall;f1_score
-2026-04-28 14:59:33.743906;anomaly_detection;2.776446580886841;0;0;962;0.0;0.0;0.0
+execution_date;task_name;execution_time;true_positives;false_positives;false_negatives;precision;recall;f1_score;algorithm_name
+2026-04-28 14:59:33.743906;anomaly_detection;2.776446580886841;0;0;962;0.0;0.0;0.0;
+2026-04-28 17:35:29.897136;;6.006067514419556;0;0;962;0.0;0.0;0.0;DBSCAN
+2026-04-28 17:35:29.897148;;6.006067514419556;956;22;6;0.9775051124744376;0.9937629937629938;0.9855670103092783;IsolationForest

@@ -61,6 +61,20 @@ CREATE TABLE sensor_measurements_discarded (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Tabella per i log delle metriche di qualità
+CREATE TABLE IF NOT EXISTS metrics_log (
+    id SERIAL PRIMARY KEY,
+    execution_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    algorithm_name VARCHAR(50),
+    execution_time FLOAT,
+    true_positives INT,
+    false_positives INT,
+    false_negatives INT,
+    precision FLOAT,
+    recall FLOAT,
+    f1_score FLOAT
+);
+
 -- Indici per query frequenti per sensore e per finestra temporale
 CREATE INDEX idx_sensor_time       ON sensor_measurements(id_sensor, day_time);
 CREATE INDEX idx_clean_sensor_time ON sensor_measurements_clean(id_sensor, day_time);
