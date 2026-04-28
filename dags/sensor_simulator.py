@@ -88,7 +88,7 @@ def generate_meas(sensor, p, start, is_night=False):
         "id_sensor": sensor,
         "day_time": start,
         "parameter_name": p,
-        "value" : int(random_mis(*range_to_use[p])),
+        "value" : int(random_mis(*range_to_use)),
         "anomaly": False
     }
     else:
@@ -96,7 +96,7 @@ def generate_meas(sensor, p, start, is_night=False):
         "id_sensor": sensor,
         "day_time": start,
         "parameter_name": p,
-        "value" : random_mis(*range_to_use[p]),
+        "value" : random_mis(*range_to_use),
         "anomaly": False
         }
     return measurement
@@ -109,11 +109,9 @@ def outlier_meas(sensor, p, start, outlier_high_prob=0.5, is_night=False):
 
     # Anomaly è impostato a true in quanto si è verificato un 'errore' da parte del sensore
     if is_night:
-        range_high = ranges_high_night[p]
-        range_low = ranges_low_night[p]
+        range_to_use = ranges_night[p]
     else:
-        range_high = ranges_high_day[p]
-        range_low = ranges_low_day[p]
+        range_to_use = ranges_day[p]
 
 
     if random.random()< outlier_high_prob:
@@ -123,7 +121,7 @@ def outlier_meas(sensor, p, start, outlier_high_prob=0.5, is_night=False):
             "id_sensor": sensor,
             "day_time": start,
             "parameter_name": p,
-            "value" : int(random_mis(*range_high[p])),
+            "value" : int(random_mis(*range_to_use)),
             "anomaly": True
         }
         else:
@@ -131,7 +129,7 @@ def outlier_meas(sensor, p, start, outlier_high_prob=0.5, is_night=False):
             "id_sensor": sensor,
             "day_time": start,
             "parameter_name": p,
-            "value" : random_mis(*range_high[p]),
+            "value" : random_mis(*range_to_use),
             "anomaly": True
             }
     else:
@@ -140,7 +138,7 @@ def outlier_meas(sensor, p, start, outlier_high_prob=0.5, is_night=False):
             "id_sensor": sensor,
             "day_time": start,
             "parameter_name": p,
-            "value" : int(random_mis(*range_low[p])),
+            "value" : int(random_mis(*range_to_use)),
             "anomaly": True
         }
         else:
@@ -148,7 +146,7 @@ def outlier_meas(sensor, p, start, outlier_high_prob=0.5, is_night=False):
             "id_sensor": sensor,
             "day_time": start,
             "parameter_name": p,
-            "value" : random_mis(*range_low[p]),
+            "value" : random_mis(*range_to_use),
             "anomaly": True
             }
     return measurement

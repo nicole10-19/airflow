@@ -4,9 +4,11 @@ from datetime import datetime
 import sys
 import logging  
 import pandas as pd 
+import time 
 from sqlalchemy import create_engine
 from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import StandardScaler
+import os
 
 
 sys.path.insert(0, '/opt/airflow/dags') 
@@ -81,6 +83,7 @@ def clean_data(**kwargs):
 
 
 def anomaly_detection(**kwargs):
+    start_time= time.time()
     ti = kwargs['ti']
 
     # Recupero i parametri puliti e analizzo ogni parametro separatamente
@@ -133,8 +136,69 @@ def anomaly_detection(**kwargs):
 
     df_final = pd.concat(result, ignore_index=True)
 
-    # Passa il risultato al task successivo via XCom
+    tp= 0 # True positive
+    fp=0 # False positive
+    fn=0 # False negative
+
+
+    for idx, row in df_final.iterrows(): # Per ogni riga del DataFrame
+
+        #Estrai i due valori che servono 
+
+        is_anomaly_real = (row['anomaly'] == True) or (row['anomaly'] == True) # Controlla se il campo anomaly è True
+        is_anomaly_detected = row['anomaly_detected_by_dbscan'] # Estrae il risultato di DBSCAN 
+
+
+        #Confronta i due risultati e conta
+        if is_anomaly_real and is_anomaly_detected:
+            tp += 1
+        elif not is_anomaly_real and is_anomaly_detected:
+            fp +=1
+        elif is_anomaly_real and not is_anomaly_detected:
+            fn += 1
+    
+    if (tp+fp)>0: 
+        precision = tp/ (tp+fp) # Maggiore è la percentuale di 'precision' , più DBSCAN è sensibile e marchia tutto come anomalia
+    else:
+        precision = 0.0
+    
+    if(tp+fn) >0:
+        recall = tp/ (tp+fn) # Più il valore di 'recall' è alto, più DBSCAN non segnale quasi nessuna anomalia 
+    else:
+        recall= 0.0
+    
+    if (precision + recall) >0:
+        f1= 2* (precision *recall) /(precision +recall) # Calcolo di una media armonica che penalizza i modelli squilibrati
+    else:
+        f1= 0.0
+    
+    log.info(f"Metriche: TP={tp}, FP={fp}, FN={fn}, Precision={precision:.3f}, Recall={recall:.3f}, F1={f1:.3f}")
+
+    end_time = time.time()
+    execution_time = end_time -start_time
+
+    metrics={
+        "execution_time": execution_time,
+        "true_positive": tp,
+        "false_positive": fp,
+        "false_negatives": fn,
+        "precision": precision,
+        "recall" : recall,
+        "f1_score": f1
+    }
+    # Passa i risultati al task successivo via XCom
+
     ti.xcom_push(key="anomaly_df", value=df_final.to_json())
+
+    ti.xcom_push(key = "metrics", value={
+            "execution_time": execution_time,
+        "true_positives": tp,
+        "false_positives": fp,
+        "false_negatives": fn,
+        "precision": precision,
+        "recall": recall,
+        "f1_score": f1
+    })
 
 
 def save_results(**kwargs):
@@ -144,6 +208,8 @@ def save_results(**kwargs):
     df_processed  = pd.read_json(ti.xcom_pull(task_ids='anomaly_detection', key="anomaly_df"))
     df_discarded   = pd.read_json(ti.xcom_pull(task_ids='clean_data',        key="discarded_df"))
 
+
+    metrics = ti.xcom_pull(task_ids= 'anomaly_detection', key='metrics')
     engine = create_engine(DB_CONN)
 
     columns_base = ['id_sensor', 'day_time', 'parameter_name', 'value',
@@ -188,6 +254,41 @@ def save_results(**kwargs):
         log.error(f"Errore salvataggio PostgreSQL: {e}")
         raise
 
+    #Salvataggio metriche in PostgreSQL
+
+    if metrics is not None:
+        df_metrics = pd.DataFrame([{
+            'execution_date': datetime.now(),
+            'task_name': 'anomaly_detection',
+            'execution_time': metrics['execution_time'],
+            'true_positives': metrics['true_positives'],
+            'false_positives': metrics['false_positives'],
+            'false_negatives': metrics['false_negatives'],
+            'precision': metrics['precision'],
+            'recall': metrics['recall'],
+            'f1_score': metrics['f1_score']
+        }])
+    
+    try:
+        df_metrics.to_sql('metrics_log', engine, if_exists='append', index= False)
+        log.info(f"metriche salvate in PostgreSQL: TP={metrics['true_positives']}, F1={metrics['f1_score']:.3f}")
+    except Exception as e:
+        log.error(f"Errore salvataggio metriche PostgreSQL: {e}")
+    
+
+    #Salvataggio metriche in CSV
+    csv_path= "/opt/airflow/dags/metrics.csv"
+
+    try:
+        if os.path.exists(csv_path):
+            df_existing =pd.read_csv(csv_path)
+            df_metrics= pd.concat([df_existing, df_metrics], ignore_index = True)
+        
+        df_metrics.to_csv(csv_path, index= False, sep=";")
+        log.info(f"Metriche salvate in CSV: {csv_path}")
+    except Exception as e:
+        log.error(f"Errore salvataggio metriche in csv: {e}")
+    
 
 with DAG(
     dag_id="greenhouse_pipeline",
