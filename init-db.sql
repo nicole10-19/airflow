@@ -80,3 +80,25 @@ CREATE INDEX idx_sensor_time       ON sensor_measurements(id_sensor, day_time);
 CREATE INDEX idx_clean_sensor_time ON sensor_measurements_clean(id_sensor, day_time);
 CREATE INDEX idx_anom_sensor_time  ON sensor_measurements_anomalies(id_sensor, day_time);
 CREATE INDEX idx_disc_sensor_time  ON sensor_measurements_discarded(id_sensor, day_time);
+
+
+-- Confronto medie performance
+SELECT 
+    algorithm_name,
+    ROUND(AVG(precision)::numeric, 3) as avg_precision,
+    ROUND(AVG(recall)::numeric, 3) as avg_recall,
+    ROUND(AVG(f1_score)::numeric, 3) as avg_f1,
+    ROUND(AVG(execution_time)::numeric, 4) as avg_speed_sec
+FROM metrics_log
+GROUP BY algorithm_name;
+
+-- Temperatura media per serra, calcolata solo su dati puliti
+CREATE OR REPLACE VIEW v_greenhouse_stats AS
+SELECT 
+    SUBSTRING(id_sensor, 1, 3) as greenhouse_zone,
+    parameter_name,
+    ROUND(AVG(value)::numeric, 2) as avg_value,
+    MIN(value) as min_value,
+    MAX(value) as max_value
+FROM sensor_measurements_clean
+GROUP BY greenhouse_zone, parameter_name;

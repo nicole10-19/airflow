@@ -1,15 +1,18 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from datetime import datetime
-import sys
-import logging  
-import pandas as pd 
-import time 
 from sqlalchemy import create_engine
+from sqlalchemy import text
 from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import StandardScaler
-import os
 from sklearn.ensemble import IsolationForest
+import matplotlib.pyplot as plt
+import pandas as pd 
+import logging
+import time 
+import sys
+import os
+
 
 sys.path.insert(0, '/opt/airflow/dags') 
 
@@ -94,7 +97,7 @@ def clean_data(**kwargs):
 
 
 
-def anomaly_detection(**kwargs):
+def anomaly_detection(eps= 0.5, min_samples= 3, contamination= 0.05, **kwargs):
     start_time = time.time()
     ti = kwargs['ti']
 
@@ -127,12 +130,12 @@ def anomaly_detection(**kwargs):
         df_param['value_normalized'] = scaler.fit_transform(df_param[['value']])
 
         # --- ALGORITMO 1: DBSCAN ---
-        dbscan = DBSCAN(eps=0.5, min_samples=3)
+        dbscan = DBSCAN(eps=eps, min_samples= min_samples)
         # Il nome della colonna deve corrispondere a quello usato nel DB e nei log
         df_param['anomaly_detected_by_dbscan'] = (dbscan.fit_predict(df_param[['value_normalized']]) == -1)
 
         # --- ALGORITMO 2: ISOLATION FOREST ---
-        iso_forest = IsolationForest(contamination=0.05, random_state=42)
+        iso_forest = IsolationForest(contamination=contamination , random_state=42)
         df_param['anomaly_iforest'] = (iso_forest.fit_predict(df_param[['value_normalized']]) == -1)
 
         # --- 3. CONFRONTO CON GROUND TRUTH (Colonna 'anomaly' del simulatore) ---
@@ -259,7 +262,7 @@ def save_results(**kwargs):
             log.error(f"Errore salvataggio metriche PostgreSQL: {e}")
 
         # Salvataggio su CSV 
-        csv_path = "/opt/airflow/dags/metrics.csv"
+        csv_path = "/opt/airflow/data/metrics.csv"
         try:
             if os.path.exists(csv_path):
                 df_existing = pd.read_csv(csv_path, sep=";")
@@ -267,6 +270,62 @@ def save_results(**kwargs):
             df_metrics.to_csv(csv_path, index=False, sep=";")
         except Exception as e:
             log.error(f"Errore salvataggio CSV metriche: {e}")
+
+
+
+
+ # Importante per eseguire query dirette
+
+import os
+import matplotlib.pyplot as plt
+from sqlalchemy import text
+
+def generate_report(**kwargs):
+    engine = create_engine(DB_CONN)
+    output_dir = '/opt/airflow/reports'
+    
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    # Definiamo la query per la vista
+    create_view_sql = """
+    CREATE OR REPLACE VIEW v_greenhouse_stats AS
+    SELECT 
+        SUBSTRING(id_sensor, 1, 3) as greenhouse_zone,
+        parameter_name,
+        ROUND(AVG(value)::numeric, 2) as avg_value
+    FROM sensor_measurements_clean
+    GROUP BY greenhouse_zone, parameter_name;
+    """
+    
+    # Usiamo il "begin()" che gestisce il commit in automatico alla fine del blocco
+    with engine.begin() as conn:
+        conn.execute(text(create_view_sql))
+    
+    # Carichiamo i dati per i grafici
+    avg_data = pd.read_sql(text("SELECT * FROM v_greenhouse_stats WHERE parameter_name = 'temperature'"), engine)
+    
+    if not avg_data.empty:
+        plt.figure(figsize=(8, 5))
+        plt.bar(avg_data['greenhouse_zone'], avg_data['avg_value'], color=['#2ecc71', '#3498db'])
+        plt.title('Temperatura Media per Serra (Dati Puliti)')
+        plt.ylabel('Gradi Celsius (°C)')
+        plt.savefig(f'{output_dir}/greenhouse_climate_report.png')
+        plt.close()
+
+    metrics_df = pd.read_sql(text("SELECT * FROM metrics_log ORDER BY execution_date DESC LIMIT 10"), engine)
+    if not metrics_df.empty:
+        plt.figure(figsize=(10, 6))
+        for algo in metrics_df['algorithm_name'].unique():
+            subset = metrics_df[metrics_df['algorithm_name'] == algo]
+            plt.plot(subset['execution_date'], subset['f1_score'], marker='o', label=algo)
+        plt.title('Andamento Performance Modelli (F1-Score)')
+        plt.legend()
+        plt.savefig(f'{output_dir}/performance_dashboard.png')
+        plt.close()
+        
+    print(f"Report salvati con successo in {output_dir}")
+
 with DAG(
     dag_id="greenhouse_pipeline",
     start_date=datetime(2026, 1, 1),
@@ -294,5 +353,9 @@ with DAG(
         task_id="save_results",
         python_callable=save_results,
     )
+    task_report = PythonOperator(
+        task_id="generate_report",
+        python_callable= generate_report
+    )
 
-    task_generate >> task_load >> task_clean >> task_anomaly >> task_save
+    task_generate >> task_load >> task_clean >> task_anomaly >> task_save >> task_report

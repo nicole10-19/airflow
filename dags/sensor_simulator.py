@@ -62,6 +62,13 @@ ranges_low_night = {
     "ph_level": (3, 6.0)
 }
 
+
+def get_random_value(p, is_night):
+    rng = ranges_night[p] if is_night else ranges_day[p]
+    val = random.uniform(*rng)
+    return int(val) if p == "CO2_level" else round(val, 3)
+
+
 def random_mis(min_val, max_val):
     
     #Genera un parametro random nel range preso come parametro iniziale e lo arrotonda di tre cifre dopo la virgola 
@@ -188,49 +195,44 @@ greenhouses = {
 
 }
 
-# Creazione di un dizionario che imposta uno start_time uguale per tutti i sensori, che poi 
-# verrà aggiornato man mano che verranno registrate le misurazioni del singolo sensore 
-def run(outlier_rate=0.05, null_rate=0.02, outlier_high_prob=0.5, scale_factor=1.0, output_path="sensori.csv"): 
-    timestamps= {}
-
+def run(outlier_rate=0.05, null_rate=0.02, outlier_high_prob=0.5, scale_factor=1.0, output_path="/opt/airflow/data/sensori.csv"):     
+    timestamps = {}
     for greenhouse in greenhouses.values():
         for id_sensor in greenhouse:
             timestamps[id_sensor] = start
 
-    misurazioni = [] # Lista vuota che servià da contenitore per raccogliere tutte le registrazioni e salvare nel file csv
-
-    #Ciclo per la genrazione delle misurazioni
-
-    # Per ogni serra, per ogni sensore, si generano n_misurazioni definite prima
-
+    misurazioni = [] 
 
     for key_val, value_val in greenhouses.items():
         for id_sensor, [parametro, intervallo, n_misurazioni] in value_val.items():
-            n_misurazioni_scaled= int(n_misurazioni* scale_factor)
+            
+            # Applichiamo lo scale_factor per decidere quanti dati generare
+            n_misurazioni_scaled = int(n_misurazioni * scale_factor)
+            
             for i in range(n_misurazioni_scaled):
                 ora = timestamps[id_sensor].hour
+                # Logica Giorno/Notte
                 is_night = (ora < 6) or (ora >= 22) 
-                rand_val= random.random() # Unica estrazione 
+                
+                rand_val = random.random() 
                 
                 if rand_val < outlier_rate:
                     misurazioni.append(outlier_meas(id_sensor, parametro, timestamps[id_sensor], outlier_high_prob, is_night))
 
                 elif rand_val < (outlier_rate + null_rate):
                     misurazioni.append(null_meas(id_sensor, parametro, timestamps[id_sensor]))
+                
                 else:
                     misurazioni.append(generate_meas(id_sensor, parametro, timestamps[id_sensor], is_night))
 
-                # Aggiorna il timestamps del sensore che ha appena effettuato la misurazione
-                timestamps[id_sensor] = timestamps[id_sensor] + datetime.timedelta(seconds= intervallo)
+                # Aggiorna il timestamps del sensore
+                timestamps[id_sensor] = timestamps[id_sensor] + datetime.timedelta(seconds=intervallo)
                 
-    # I valori nulli vengono sostituiti da 'null'
-    for riga  in misurazioni:
+    for riga in misurazioni:
         for chiave, valore in riga.items():
             if valore is None:
                 riga[chiave] = "null"
 
-    # Salva misurazioni in un file csv in ordine cronologico e separando con una ',' i valori.
-    # Ogni riga conterrà una misurazione di un sensore 
-    df = pd.DataFrame(misurazioni).sort_values(by= ("day_time"))
+    # Salvataggio finale identico al tuo
+    df = pd.DataFrame(misurazioni).sort_values(by=("day_time"))
     df.to_csv(output_path, index=False, sep=";")
-    pass
