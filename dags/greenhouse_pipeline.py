@@ -206,13 +206,13 @@ def plot_precision_recall_curves(y_true, y_pred_dbscan, y_pred_iforest, output_d
     # DBSCAN
     precision_db, recall_db, _ = precision_recall_curve(y_true, y_pred_dbscan.astype(float))
     auc_db = auc(recall_db, precision_db)
-    ax.plot(recall_db, precision_db, 'b-', linewidth=2.5, 
+    ax.plot(recall_db, precision_db, 'b-', linewidth=5, 
            label=f'DBSCAN (AUC={auc_db:.3f})')
     
     # Isolation Forest
     precision_if, recall_if, _ = precision_recall_curve(y_true, y_pred_iforest.astype(float))
     auc_if = auc(recall_if, precision_if)
-    ax.plot(recall_if, precision_if, 'r-', linewidth=2.5,
+    ax.plot(recall_if, precision_if, 'r-', linewidth=2,
            label=f'Isolation Forest (AUC={auc_if:.3f})')
     
     ax.set_xlabel('Recall (Sensitivity)', fontsize=12, fontweight='bold')

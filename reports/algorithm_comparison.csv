@@ -1,8 +1,8 @@
 Metric;DBSCAN;Isolation Forest;Winner
-Precision;0.1250;0.0520;DBSCAN ✓
-Recall;0.0003;0.0509;I-Forest ✓
-F1-Score;0.0007;0.0514;I-Forest ✓
-True Positives;1;153;
-False Positives;7;2791;
-False Negatives;3007;2855;
+Precision;0.0000;0.0444;I-Forest ✓
+Recall;0.0000;0.0440;I-Forest ✓
+F1-Score;0.0000;0.0442;I-Forest ✓
+True Positives;0;130;
+False Positives;4;2800;
+False Negatives;2957;2827;
 Execution Time (ms);0.00;0.00;
