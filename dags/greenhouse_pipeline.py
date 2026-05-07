@@ -26,6 +26,12 @@ DB_CONN = 'postgresql+psycopg2://airflow:airflow@postgres:5432/greenhouse_db' # 
 
 
 def calc_performance_metrics(tp, fp, fn):
+    #Calcola metriche di performance da una confusion matrix.
+    
+   # Dato un True Positive, False Positive e False Negative, calcola:
+   #    - Precision: tp / (tp + fp)
+   #    - Recall: tp / (tp + fn)
+   #    - F1-Score: media armonica di precision e recall
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0 
 
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0 
@@ -33,15 +39,9 @@ def calc_performance_metrics(tp, fp, fn):
     return precision, recall, f1
 
 def plot_confusion_matrix_heatmap(y_true, y_pred_dbscan, y_pred_iforest, output_dir):
-    """
-    Crea Confusion Matrix heatmap side-by-side per DBSCAN e Isolation Forest.
-    
-    Args:
-        y_true: Array bool, True = anomalia reale
-        y_pred_dbscan: Array bool, predizioni DBSCAN
-        y_pred_iforest: Array bool, predizioni Isolation Forest
-        output_dir: Cartella dove salvare PNG
-    """
+   
+    # Crea Confusion Matrix heatmap side-by-side per DBSCAN e Isolation Forest.
+   
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
     
     algorithms = ['DBSCAN', 'Isolation Forest']
@@ -77,9 +77,9 @@ def plot_confusion_matrix_heatmap(y_true, y_pred_dbscan, y_pred_iforest, output_
  
  
 def plot_algorithm_comparison_table(metrics_dbscan, metrics_iforest, output_dir):
-    """
-    Crea tabella professionale che confronta i due algoritmi.
-    """
+    
+    #Crea una tabella che confronta i due algoritmi, mostrando tutte le metriche 
+    
     comparison_data = {
         'Metric': ['Precision', 'Recall', 'F1-Score', 'True Positives', 
                    'False Positives', 'False Negatives', 'Execution Time (ms)'],
@@ -106,10 +106,11 @@ def plot_algorithm_comparison_table(metrics_dbscan, metrics_iforest, output_dir)
     
     # Determina vincitori
     for i in range(len(comparison_data['DBSCAN'])):
-        if i < 3:  # Per metriche (precision, recall, F1)
+        if i < 3: 
             val_db = float(comparison_data['DBSCAN'][i])
             val_if = float(comparison_data['Isolation Forest'][i])
             
+            # Viene considerato un 'pareggio' se differenza <0.01
             if abs(val_db - val_if) < 0.01:
                 comparison_data['Winner'].append('Tie')
             elif val_db > val_if:
@@ -121,7 +122,7 @@ def plot_algorithm_comparison_table(metrics_dbscan, metrics_iforest, output_dir)
     
     df_comparison = pd.DataFrame(comparison_data)
     
-    # Crea figura
+    
     fig, ax = plt.subplots(figsize=(14, 6))
     ax.axis('tight')
     ax.axis('off')
@@ -136,12 +137,10 @@ def plot_algorithm_comparison_table(metrics_dbscan, metrics_iforest, output_dir)
     table.set_fontsize(11)
     table.scale(1, 2.5)
     
-    # Stile header
     for i in range(len(df_comparison.columns)):
         table[(0, i)].set_facecolor('#2c3e50')
         table[(0, i)].set_text_props(weight='bold', color='white', fontsize=12)
     
-    # Stile righe alternate
     for i in range(1, len(df_comparison) + 1):
         for j in range(len(df_comparison.columns)):
             if i % 2 == 0:
@@ -149,7 +148,7 @@ def plot_algorithm_comparison_table(metrics_dbscan, metrics_iforest, output_dir)
             else:
                 table[(i, j)].set_facecolor('#ffffff')
             
-            # Evidenzia vincitori
+        
             if j == 3 and '✓' in str(table[(i, j)].get_text().get_text()):
                 table[(i, j)].set_facecolor('#d5f4e6')
                 table[(i, j)].set_text_props(weight='bold', color='#27ae60')
@@ -159,11 +158,19 @@ def plot_algorithm_comparison_table(metrics_dbscan, metrics_iforest, output_dir)
     plt.savefig(f'{output_dir}/02_algorithm_comparison.png', dpi=300, bbox_inches='tight')
     plt.close()
     
+    # Salvataggio anche in CSV
     df_comparison.to_csv(f'{output_dir}/algorithm_comparison.csv', index=False, sep=';')
     log.info("✓ Saved: 02_algorithm_comparison.png")
  
  
 def plot_anomaly_scatter_by_parameter(df, parameter, output_dir):
+
+    # Crea scatter plot mostrando le anomalie rilevate da DBSCAN e Isolation Forest.
+    # Codifica colori per ogni punto:
+    #   - Verde (TP): Anomalia rilevata correttamente
+    #   - Rosso (FP): Falso positivo
+    #   - Blu (TN): Valore normale correttamente identificato
+    #   - Arancione (FN): Anomalia non rilevata
     df_param = df[df['parameter_name'] == parameter].copy().reset_index(drop=True)
     
     if len(df_param) == 0:
@@ -183,23 +190,26 @@ def plot_anomaly_scatter_by_parameter(df, parameter, output_dir):
             default='#7f8c8d'
         )
 
-    # Applichiamo a DBSCAN
+    #  DBSCAN
     colors_db = get_color_map(df_param['anomaly'], df_param['anomaly_detected_by_dbscan'])
     ax1.scatter(df_param.index, df_param['value'], c=colors_db, s=60, alpha=0.6, edgecolors='none')
     
-    # Applichiamo a ISOLATION FOREST
+    # ISOLATION FOREST
     colors_if = get_color_map(df_param['anomaly'], df_param['anomaly_iforest'])
     ax2.scatter(df_param.index, df_param['value'], c=colors_if, s=60, alpha=0.6, edgecolors='none')
 
-    # --- SETUP GRAFICO ---
     ax1.set_title(f'DBSCAN - {parameter}', fontweight='bold')
     ax2.set_title(f'Isolation Forest - {parameter}', fontweight='bold')
     
-    # ... (le tue legende e salvataggio) ...
     plt.savefig(f'{output_dir}/03_scatter_{parameter}.png', dpi=150) # DPI 150 è sufficiente e più leggero
     plt.close()
  
 def plot_precision_recall_curves(y_true, y_pred_dbscan, y_pred_iforest, output_dir):
+
+    # Crea curve Precision-Recall per confrontare le performance dei due algoritmi.
+    # La curva Precision-Recall è utile per dataset sbilanciati (poche anomalie).
+    # L'area sotto la curva (AUC) rappresenta la performance media.
+
 
     fig, ax = plt.subplots(figsize=(10, 7))
     
@@ -231,9 +241,9 @@ def plot_precision_recall_curves(y_true, y_pred_dbscan, y_pred_iforest, output_d
  
  
 def plot_parameter_distributions(df, output_dir):
-    """
-    Crea distribuzione per ogni parametro (prima di anomaly detection).
-    """
+    
+    #Crea distribuzione per ogni parametro evidenziando la media .
+    
     parameters = df['parameter_name'].unique()
     n_params = len(parameters)
     
@@ -267,13 +277,14 @@ def plot_parameter_distributions(df, output_dir):
     log.info("✓ Saved: 05_distributions.png")
 
 def generate_data():
-
+    # Task 1 --> Generazione dataset simulato di sensori tramite la chiamata a sensor_simulator.run() con scale_factor=3.0 
+    # per generare (circa)19000 righe di dati (3 giorni * 5 parametri * 2 serre)
     run(scale_factor = 3.0) 
 
 
 def load_data():
 
-    # La funzione legge il CSV generato dal simulatore e ritorna il DataFrame in formato JSON
+    # Task 2 -->legge il CSV generato dal simulatore e ritorna il DataFrame in formato JSON
     # così che Airflow può passarlo alla task successiva
     df = pd.read_csv("/opt/airflow/data/sensori.csv", sep=";")
     log.info(f"Caricati {len(df)} record dal CSV")
@@ -282,6 +293,9 @@ def load_data():
     # NB: viene utilizzato '**kwargs' perchè la funzione può ricevere un numero variabile di argomenti
 def clean_data(**kwargs):
 
+    # Task 3 --> Pulisce i dati rimuovendo valori nulli o invalidi.
+    # Recupera DataFrame da Xcom, identifica righe con valori nulli o timestamp mancanti e separa i dati in due insiemi  (df_clean e df_discarded)
+    # Ritorna 'clean_df' (DataFrame pulito ) e 'discarded_df' (DataFrame degli scarti)
     ti = kwargs['ti'] 
 
     # Recupera i dati letti dal CSV
@@ -299,7 +313,7 @@ def clean_data(**kwargs):
 
     df_clean = df[~mask_scartati].copy()
 
-    # Conversionein float, se un valore non è convertibile lo trasforma in NaN  e identifica valori non numerici 
+    # Conversione in float, se un valore non è convertibile lo trasforma in NaN  e identifica valori non numerici 
     df_clean["value"] = pd.to_numeric(df_clean["value"], errors="coerce")
     mask_non_numerici = df_clean["value"].isna()
 
@@ -320,7 +334,6 @@ def clean_data(**kwargs):
         f"{len(df_clean)} validi, {len(df_discarded)} scartati"
     )
 
-    # Passa sia i dati puliti che quelli scartati alla task successiva 
     ti.xcom_push(key="clean_df",     value=df_clean.to_json())
     ti.xcom_push(key="discarded_df", value=df_discarded.to_json())
 
@@ -328,15 +341,26 @@ def clean_data(**kwargs):
 
 
 def anomaly_detection(eps= 0.1, min_samples= 2, contamination= 0.05, **kwargs):
+
+    # Task 4 --> Applica due algoritmi di anomaly detection e confronta i risultati. 
+
+    # Algoritmi : 
+    #   1- DBSCAN --> Density-based clustering 
+    #   2- Isolation Forest --> Ensemble method
+
+    # Per ogni parametro normalizza i valori con StandardScaler, applica entrambi gli algoritmi,
+    # confronta con gound truth e calcola metriche (TP, FP, FN, Precision, Recall, F1)
+    
+    # Ritorna : anomaly_df --> DataFrame con predizioni di entrambi gli algoritmi  e metrics --> dizionario con metriche DBSCAN e IsoF
     start_time = time.time()
     ti = kwargs['ti']
 
-    # 1. Recupero i dati puliti da XCom
+    # Recupero i dati puliti da XCom
     data = ti.xcom_pull(task_ids='clean_data', key="clean_df")
     df = pd.read_json(data)
     df['value'] = df['value'].astype(float)
 
-    # 2. Inizializzazione statistiche per il confronto (Ground Truth)
+    # Inizializzazione statistiche per il confronto (Ground Truth)
     stats = {
         'dbscan':  {'tp': 0, 'fp': 0, 'fn': 0},
         'iforest': {'tp': 0, 'fp': 0, 'fn': 0}
@@ -356,7 +380,6 @@ def anomaly_detection(eps= 0.1, min_samples= 2, contamination= 0.05, **kwargs):
             continue
 
         scaler = StandardScaler()
-        # Nota: usiamo [[ ]] per evitare i warning di feature names con Isolation Forest
         df_param['value_normalized'] = scaler.fit_transform(df_param[['value']])
 
         # --- ALGORITMO 1: DBSCAN ---
@@ -367,11 +390,10 @@ def anomaly_detection(eps= 0.1, min_samples= 2, contamination= 0.05, **kwargs):
         iso_forest = IsolationForest(contamination=contamination , random_state=42)
         df_param['anomaly_iforest'] = (iso_forest.fit_predict(df_param[['value_normalized']]) == -1)
 
-        # --- 3. CONFRONTO CON GROUND TRUTH (Colonna 'anomaly' del simulatore) ---
+        # ---  CONFRONTO CON GROUND TRUTH ---
         for idx, row in df_param.iterrows():
             real = bool(row['anomaly'])
 
-            # Statistiche DBSCAN (corretto refuso dbascan)
             if real and row['anomaly_detected_by_dbscan']: 
                 stats['dbscan']['tp'] += 1
             elif not real and row['anomaly_detected_by_dbscan']: 
@@ -379,7 +401,6 @@ def anomaly_detection(eps= 0.1, min_samples= 2, contamination= 0.05, **kwargs):
             elif real and not row['anomaly_detected_by_dbscan']:
                 stats['dbscan']['fn'] += 1
             
-            # Statistiche Isolation Forest
             if real and row['anomaly_iforest']:
                 stats['iforest']['tp'] += 1
             elif not real and row['anomaly_iforest']:
@@ -387,10 +408,8 @@ def anomaly_detection(eps= 0.1, min_samples= 2, contamination= 0.05, **kwargs):
             elif real and not row['anomaly_iforest']:
                 stats['iforest']['fn'] += 1 
 
-        # Aggiungiamo i metadati richiesti dal DB (anche se fissi)
         df_param['confidence_score'] = 0.0
         
-        # Log dei risultati per questo parametro
         n_db = df_param['anomaly_detected_by_dbscan'].sum()
         n_if = df_param['anomaly_iforest'].sum()
         log.info(f"Parametro '{param}': record={len(df_param)}, DBSCAN={n_db}, I-Forest={n_if}")
@@ -401,16 +420,13 @@ def anomaly_detection(eps= 0.1, min_samples= 2, contamination= 0.05, **kwargs):
         log.error("Nessun parametro processato — controlla il CSV.")
         raise ValueError("anomaly_detection: nessun dato disponibile dopo il filtraggio")
 
-    # Uniamo tutti i parametri in un unico DataFrame
     df_final = pd.concat(result, ignore_index=True)
 
-    # 4. CALCOLO METRICHE FINALI (usando la funzione esterna calc_performance_metrics)
+    # CALCOLO METRICHE FINALI (usando la funzione esterna calc_performance_metrics)
     p_db, r_db, f1_db = calc_performance_metrics(stats['dbscan']['tp'], stats['dbscan']['fp'], stats['dbscan']['fn'])
     p_if, r_if, f1_if = calc_performance_metrics(stats['iforest']['tp'], stats['iforest']['fp'], stats['iforest']['fn'])
 
     execution_time = time.time() - start_time
-
-    # Prepariamo il pacchetto metriche da passare a save_results
 
     metrics_summary = {
         "execution_time": execution_time,
@@ -424,23 +440,26 @@ def anomaly_detection(eps= 0.1, min_samples= 2, contamination= 0.05, **kwargs):
         }
     }
 
-    # Passiamo i risultati al task successivo via XCom
     ti.xcom_push(key="anomaly_df", value=df_final.to_json())
     ti.xcom_push(key="metrics", value=metrics_summary)
 
     log.info(f"Analisi completata in {execution_time:.2f}s. DBSCAN F1: {f1_db:.3f}, I-Forest F1: {f1_if:.3f}")
 
 def save_results(**kwargs):
+
+    # Task 5 --> salva i risultati dell' anomaly detection nelle tabelle PostgreSQL e le metriche di performance in 'metrics_log'
+    # 3 tabelle :
+    #   1- sensor_measurements_clean 
+    #   2- sensor_measurements_anomalies
+    #   3- sensor_measurements_discarded
     ti = kwargs['ti']
 
-    # Recupero dati e metriche da XCom
     df_processed = pd.read_json(ti.xcom_pull(task_ids='anomaly_detection', key="anomaly_df"))
     df_discarded = pd.read_json(ti.xcom_pull(task_ids='clean_data', key="discarded_df"))
     metrics = ti.xcom_pull(task_ids='anomaly_detection', key='metrics')
     
     engine = create_engine(DB_CONN)
 
-    # Colonne base per le tabelle dei sensori
     columns_base = ['id_sensor', 'day_time', 'parameter_name', 'value',
                     'anomaly', 'anomaly_detected_by_dbscan', 'confidence_score']
 
@@ -503,6 +522,14 @@ def save_results(**kwargs):
 
 
 def generate_report(**kwargs):
+
+    # Task 6 --> genera report visuale con grafici comparativi e analitici
+    # Crea 5 visualizzazioni e vengono salvate in /opt/airflow/reports come PNG:
+    #   1. Confusion Matrix (side-by-side DBSCAN vs Isolation Forest)
+    #   2. Tabella comparativa delle metriche
+    #   3. Scatter plots per parametro (mostrando TP/FP/TN/FN)
+    #   4. Precision-Recall curves
+    #   5. Istogrammi di distribuzione dei parametri
     start_time = time.time()
     output_dir = '/opt/airflow/reports'
     os.makedirs(output_dir, exist_ok=True)
@@ -577,26 +604,21 @@ def generate_report(**kwargs):
     log.info("[3/5] Generating Scatter Plots by Parameter...")
     try:
         for param in sorted(df['parameter_name'].unique()):
-            # 1. Filtra per il parametro attuale
             df_param = df[df['parameter_name'] == param]
             
-            # 2. Logica di campionamento condizionale
+            # Campiona se il dataset è molto grande (evita grafici troppo pesanti)
             if len(df_param) > 1000:
-                # Se sono tanti (es. Temperatura), campioniamo a 1000
                 df_to_plot = df_param.sample(n=1000, random_state=42).sort_index()
                 log.info(f"   -> {param}: Sampling 1000/{len(df_param)} points")
             else:
-                # Se sono pochi (es. pH), li usiamo TUTTI
                 df_to_plot = df_param.sort_index()
                 log.info(f"   -> {param}: Using all {len(df_param)} points")
             
-            # 3. Genera il grafico
             plot_anomaly_scatter_by_parameter(df_to_plot, param, output_dir)
             
     except Exception as e:
         log.error(f"Failed to generate scatter plots: {e}")
     
-    # GRAFICO 4: Precision-Recall Curves
     log.info("[4/5] Generating Precision-Recall Curves...")
     try:
         plot_precision_recall_curves(
@@ -608,20 +630,18 @@ def generate_report(**kwargs):
     except Exception as e:
         log.error(f"Failed to generate PR curves: {e}")
     
-    # GRAFICO 5: Distribuzioni Parametri
     log.info("[5/5] Generating Parameter Distributions...")
     try:
         plot_parameter_distributions(df, output_dir)
     except Exception as e:
         log.error(f"Failed to generate distributions: {e}")
     
-    # ===== 4. Salva metriche nel database =====
+    #  Salvataggio metriche nel database 
     log.info("=" * 60)
     log.info("SAVING METRICS TO DATABASE")
     log.info("=" * 60)
     
     try:
-        # Salva DBSCAN
         insert_query_dbscan = text("""
             INSERT INTO metrics_log 
             (algorithm_name, execution_time, true_positives, false_positives, 
