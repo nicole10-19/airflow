@@ -179,18 +179,18 @@ def null_meas(sensor, p, start):
 greenhouses = {
     "first_greenhouse" : {
         "S0001": ["temperature", 15,2880],
-        "S0003": ["humidity", 30, 1440],
-        "S0004": ["CO2_level", 15, 2880],
-        "S0005": ["ventilation", 15, 2880],
-        "S0006": ["ph_level", 43200, 2]
+        "S0002": ["humidity", 30, 1440],
+        "S0003": ["CO2_level", 15, 2880],
+        "S0004": ["ventilation", 15, 2880],
+        "S0005": ["ph_level", 43200, 2]
     },
 
     "second_greenhouse" : {
-        "S0007": ["temperature", 15, 2880],
-        "S0009": ["humidity", 30, 1440],
-        "S0010": ["CO2_level", 15, 2880],
-        "S0011": ["ventilation", 15, 2880],
-        "S0012": ["ph_level", 43200, 2]
+        "S0006": ["temperature", 15, 2880],
+        "S0007": ["humidity", 30, 1440],
+        "S0008": ["CO2_level", 15, 2880],
+        "S0009": ["ventilation", 15, 2880],
+        "S0010": ["ph_level", 43200, 2]
     }
 
 }

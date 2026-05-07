@@ -1,18 +1,20 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from datetime import datetime
-from sqlalchemy import create_engine
-from sqlalchemy import text
+from sqlalchemy import create_engine, text
 from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import IsolationForest
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+import seaborn as sns
 import pandas as pd 
+import numpy as np
 import logging
 import time 
 import sys
 import os
-
+from sklearn.metrics import confusion_matrix, precision_recall_curve, auc
 
 sys.path.insert(0, '/opt/airflow/dags') 
 
@@ -24,28 +26,258 @@ DB_CONN = 'postgresql+psycopg2://airflow:airflow@postgres:5432/greenhouse_db' # 
 
 
 def calc_performance_metrics(tp, fp, fn):
-    precision = tp / (tp +fp ) if (tp + fp ) >0 else 0.0 
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0 
 
-    recall = tp / (tp + fn) if (tp + fp) >0 else 0.0
-
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0 
     f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
-    
-    return precision, recall, f1 
+    return precision, recall, f1
 
+def plot_confusion_matrix_heatmap(y_true, y_pred_dbscan, y_pred_iforest, output_dir):
+    """
+    Crea Confusion Matrix heatmap side-by-side per DBSCAN e Isolation Forest.
+    
+    Args:
+        y_true: Array bool, True = anomalia reale
+        y_pred_dbscan: Array bool, predizioni DBSCAN
+        y_pred_iforest: Array bool, predizioni Isolation Forest
+        output_dir: Cartella dove salvare PNG
+    """
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    
+    algorithms = ['DBSCAN', 'Isolation Forest']
+    predictions = [y_pred_dbscan, y_pred_iforest]
+    
+    for idx, (ax, algo, y_pred) in enumerate(zip(axes, algorithms, predictions)):
+        # Calcola confusion matrix
+        cm = confusion_matrix(y_true, y_pred, labels=[False, True])
+        tn, fp, fn, tp = cm.ravel()
+        
+        # Calcola metriche
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+        f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+        
+        # Crea heatmap
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax,
+                   cbar=False, annot_kws={'size': 14, 'weight': 'bold'},
+                   xticklabels=['Normal', 'Anomaly'],
+                   yticklabels=['Normal', 'Anomaly'])
+        
+        ax.set_xlabel('Predicted', fontsize=11, fontweight='bold')
+        ax.set_ylabel('Actual', fontsize=11, fontweight='bold')
+        ax.set_title(f'{algo}\nP={precision:.3f} | R={recall:.3f} | F1={f1:.3f}',
+                    fontsize=12, fontweight='bold', pad=10)
+    
+    plt.suptitle('Confusion Matrix Comparison: DBSCAN vs Isolation Forest',
+                fontsize=14, fontweight='bold', y=1.02)
+    plt.tight_layout()
+    plt.savefig(f'{output_dir}/01_confusion_matrix.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    log.info("✓ Saved: 01_confusion_matrix.png")
+ 
+ 
+def plot_algorithm_comparison_table(metrics_dbscan, metrics_iforest, output_dir):
+    """
+    Crea tabella professionale che confronta i due algoritmi.
+    """
+    comparison_data = {
+        'Metric': ['Precision', 'Recall', 'F1-Score', 'True Positives', 
+                   'False Positives', 'False Negatives', 'Execution Time (ms)'],
+        'DBSCAN': [
+            f"{metrics_dbscan['precision']:.4f}",
+            f"{metrics_dbscan['recall']:.4f}",
+            f"{metrics_dbscan['f1_score']:.4f}",
+            metrics_dbscan['tp'],
+            metrics_dbscan['fp'],
+            metrics_dbscan['fn'],
+            f"{metrics_dbscan.get('execution_time', 0) * 1000:.2f}"
+        ],
+        'Isolation Forest': [
+            f"{metrics_iforest['precision']:.4f}",
+            f"{metrics_iforest['recall']:.4f}",
+            f"{metrics_iforest['f1_score']:.4f}",
+            metrics_iforest['tp'],
+            metrics_iforest['fp'],
+            metrics_iforest['fn'],
+            f"{metrics_iforest.get('execution_time', 0) * 1000:.2f}"
+        ],
+        'Winner': []
+    }
+    
+    # Determina vincitori
+    for i in range(len(comparison_data['DBSCAN'])):
+        if i < 3:  # Per metriche (precision, recall, F1)
+            val_db = float(comparison_data['DBSCAN'][i])
+            val_if = float(comparison_data['Isolation Forest'][i])
+            
+            if abs(val_db - val_if) < 0.01:
+                comparison_data['Winner'].append('Tie')
+            elif val_db > val_if:
+                comparison_data['Winner'].append('DBSCAN ✓')
+            else:
+                comparison_data['Winner'].append('I-Forest ✓')
+        else:
+            comparison_data['Winner'].append('')
+    
+    df_comparison = pd.DataFrame(comparison_data)
+    
+    # Crea figura
+    fig, ax = plt.subplots(figsize=(14, 6))
+    ax.axis('tight')
+    ax.axis('off')
+    
+    table = ax.table(cellText=df_comparison.values,
+                    colLabels=df_comparison.columns,
+                    cellLoc='center',
+                    loc='center',
+                    colWidths=[0.25, 0.20, 0.25, 0.15])
+    
+    table.auto_set_font_size(False)
+    table.set_fontsize(11)
+    table.scale(1, 2.5)
+    
+    # Stile header
+    for i in range(len(df_comparison.columns)):
+        table[(0, i)].set_facecolor('#2c3e50')
+        table[(0, i)].set_text_props(weight='bold', color='white', fontsize=12)
+    
+    # Stile righe alternate
+    for i in range(1, len(df_comparison) + 1):
+        for j in range(len(df_comparison.columns)):
+            if i % 2 == 0:
+                table[(i, j)].set_facecolor('#ecf0f1')
+            else:
+                table[(i, j)].set_facecolor('#ffffff')
+            
+            # Evidenzia vincitori
+            if j == 3 and '✓' in str(table[(i, j)].get_text().get_text()):
+                table[(i, j)].set_facecolor('#d5f4e6')
+                table[(i, j)].set_text_props(weight='bold', color='#27ae60')
+    
+    plt.title('Algorithm Performance Comparison',
+             fontweight='bold', fontsize=14, pad=20)
+    plt.savefig(f'{output_dir}/02_algorithm_comparison.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    df_comparison.to_csv(f'{output_dir}/algorithm_comparison.csv', index=False, sep=';')
+    log.info("✓ Saved: 02_algorithm_comparison.png")
+ 
+ 
+def plot_anomaly_scatter_by_parameter(df, parameter, output_dir):
+    df_param = df[df['parameter_name'] == parameter].copy().reset_index(drop=True)
+    
+    if len(df_param) == 0:
+        return
+    
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 5))
+    
+    def get_color_map(y_true, y_pred):
+        return np.select(
+            condlist=[
+                (y_true == 1) & (y_pred == 1), # TP
+                (y_true == 0) & (y_pred == 1), # FP
+                (y_true == 0) & (y_pred == 0), # TN
+                (y_true == 1) & (y_pred == 0)  # FN
+            ],
+            choicelist=['#27ae60', '#e74c3c', '#3498db', '#f39c12'],
+            default='#7f8c8d'
+        )
+
+    # Applichiamo a DBSCAN
+    colors_db = get_color_map(df_param['anomaly'], df_param['anomaly_detected_by_dbscan'])
+    ax1.scatter(df_param.index, df_param['value'], c=colors_db, s=60, alpha=0.6, edgecolors='none')
+    
+    # Applichiamo a ISOLATION FOREST
+    colors_if = get_color_map(df_param['anomaly'], df_param['anomaly_iforest'])
+    ax2.scatter(df_param.index, df_param['value'], c=colors_if, s=60, alpha=0.6, edgecolors='none')
+
+    # --- SETUP GRAFICO ---
+    ax1.set_title(f'DBSCAN - {parameter}', fontweight='bold')
+    ax2.set_title(f'Isolation Forest - {parameter}', fontweight='bold')
+    
+    # ... (le tue legende e salvataggio) ...
+    plt.savefig(f'{output_dir}/03_scatter_{parameter}.png', dpi=150) # DPI 150 è sufficiente e più leggero
+    plt.close()
+ 
+def plot_precision_recall_curves(y_true, y_pred_dbscan, y_pred_iforest, output_dir):
+
+    fig, ax = plt.subplots(figsize=(10, 7))
+    
+    # DBSCAN
+    precision_db, recall_db, _ = precision_recall_curve(y_true, y_pred_dbscan.astype(float))
+    auc_db = auc(recall_db, precision_db)
+    ax.plot(recall_db, precision_db, 'b-', linewidth=2.5, 
+           label=f'DBSCAN (AUC={auc_db:.3f})')
+    
+    # Isolation Forest
+    precision_if, recall_if, _ = precision_recall_curve(y_true, y_pred_iforest.astype(float))
+    auc_if = auc(recall_if, precision_if)
+    ax.plot(recall_if, precision_if, 'r-', linewidth=2.5,
+           label=f'Isolation Forest (AUC={auc_if:.3f})')
+    
+    ax.set_xlabel('Recall (Sensitivity)', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Precision', fontsize=12, fontweight='bold')
+    ax.set_title('Precision-Recall Curve Comparison', fontsize=13, fontweight='bold')
+    ax.legend(fontsize=11, loc='best')
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    
+    plt.tight_layout()
+    plt.savefig(f'{output_dir}/04_precision_recall.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    
+ 
+ 
+def plot_parameter_distributions(df, output_dir):
+    """
+    Crea distribuzione per ogni parametro (prima di anomaly detection).
+    """
+    parameters = df['parameter_name'].unique()
+    n_params = len(parameters)
+    
+    fig, axes = plt.subplots(2, 3, figsize=(15, 8))
+    axes = axes.flatten()
+    
+    for idx, param in enumerate(sorted(parameters)):
+        ax = axes[idx]
+        df_param = df[df['parameter_name'] == param]['value'].dropna()
+        
+        ax.hist(df_param, bins=30, color='#3498db', alpha=0.7, edgecolor='black')
+        ax.set_title(f'Distribution - {param}', fontweight='bold', fontsize=11)
+        ax.set_xlabel('Value', fontsize=10)
+        ax.set_ylabel('Frequency', fontsize=10)
+        ax.grid(axis='y', alpha=0.3)
+        
+       
+        mean_val = df_param.mean()
+        std_val = df_param.std()
+        ax.axvline(mean_val, color='red', linestyle='--', linewidth=2, label=f'Mean: {mean_val:.2f}')
+        ax.legend(fontsize=9)
+    
+    for idx in range(n_params, len(axes)):
+        axes[idx].set_visible(False)
+    
+    plt.suptitle('Parameter Distributions', fontsize=14, fontweight='bold', y=1.00)
+    plt.tight_layout()
+    plt.savefig(f'{output_dir}/05_distributions.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    log.info("✓ Saved: 05_distributions.png")
 
 def generate_data():
-    # Chiamata a run() che genera (o aggiorna) il file sensori.csv con nuove misurazioni 
-    run() 
+
+    run(scale_factor = 3.0) 
 
 
 def load_data():
 
     # La funzione legge il CSV generato dal simulatore e ritorna il DataFrame in formato JSON
     # così che Airflow può passarlo alla task successiva
-    df = pd.read_csv("/opt/airflow/dags/sensori.csv", sep=";")
+    df = pd.read_csv("/opt/airflow/data/sensori.csv", sep=";")
     log.info(f"Caricati {len(df)} record dal CSV")
     return df.to_json() 
-
 
     # NB: viene utilizzato '**kwargs' perchè la funzione può ricevere un numero variabile di argomenti
 def clean_data(**kwargs):
@@ -58,7 +290,6 @@ def clean_data(**kwargs):
 
     righe_iniziali = len(df)
 
-
     #  Scarta le righe senza valore o senza timestamps, in quanto non utilizzabili 
     mask_scartati = df["value"].isna() | (df["value"] == "null") | \
                     df["day_time"].isna() | (df["day_time"] == "null")
@@ -68,7 +299,6 @@ def clean_data(**kwargs):
 
     df_clean = df[~mask_scartati].copy()
 
-    
     # Conversionein float, se un valore non è convertibile lo trasforma in NaN  e identifica valori non numerici 
     df_clean["value"] = pd.to_numeric(df_clean["value"], errors="coerce")
     mask_non_numerici = df_clean["value"].isna()
@@ -97,7 +327,7 @@ def clean_data(**kwargs):
 
 
 
-def anomaly_detection(eps= 0.5, min_samples= 3, contamination= 0.05, **kwargs):
+def anomaly_detection(eps= 0.1, min_samples= 2, contamination= 0.05, **kwargs):
     start_time = time.time()
     ti = kwargs['ti']
 
@@ -131,7 +361,6 @@ def anomaly_detection(eps= 0.5, min_samples= 3, contamination= 0.05, **kwargs):
 
         # --- ALGORITMO 1: DBSCAN ---
         dbscan = DBSCAN(eps=eps, min_samples= min_samples)
-        # Il nome della colonna deve corrispondere a quello usato nel DB e nei log
         df_param['anomaly_detected_by_dbscan'] = (dbscan.fit_predict(df_param[['value_normalized']]) == -1)
 
         # --- ALGORITMO 2: ISOLATION FOREST ---
@@ -182,6 +411,7 @@ def anomaly_detection(eps= 0.5, min_samples= 3, contamination= 0.05, **kwargs):
     execution_time = time.time() - start_time
 
     # Prepariamo il pacchetto metriche da passare a save_results
+
     metrics_summary = {
         "execution_time": execution_time,
         "dbscan": {
@@ -214,7 +444,7 @@ def save_results(**kwargs):
     columns_base = ['id_sensor', 'day_time', 'parameter_name', 'value',
                     'anomaly', 'anomaly_detected_by_dbscan', 'confidence_score']
 
-    # --- Salvataggio Tabelle Sensori ---
+    
     try:
         # Tabella 1 Dati sani 
         df_clean_out = df_processed[~df_processed['anomaly_detected_by_dbscan']][columns_base].copy()
@@ -272,59 +502,169 @@ def save_results(**kwargs):
             log.error(f"Errore salvataggio CSV metriche: {e}")
 
 
-
-
- # Importante per eseguire query dirette
-
-import os
-import matplotlib.pyplot as plt
-from sqlalchemy import text
-
 def generate_report(**kwargs):
-    engine = create_engine(DB_CONN)
+    start_time = time.time()
     output_dir = '/opt/airflow/reports'
+    os.makedirs(output_dir, exist_ok=True)
     
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-
-    # Definiamo la query per la vista
-    create_view_sql = """
-    CREATE OR REPLACE VIEW v_greenhouse_stats AS
-    SELECT 
-        SUBSTRING(id_sensor, 1, 3) as greenhouse_zone,
-        parameter_name,
-        ROUND(AVG(value)::numeric, 2) as avg_value
-    FROM sensor_measurements_clean
-    GROUP BY greenhouse_zone, parameter_name;
-    """
+    ti = kwargs['ti']
     
-    # Usiamo il "begin()" che gestisce il commit in automatico alla fine del blocco
-    with engine.begin() as conn:
-        conn.execute(text(create_view_sql))
+    # ===== 1. Recupera dati da XCom =====
+    log.info("Retrieving data from previous tasks...")
     
-    # Carichiamo i dati per i grafici
-    avg_data = pd.read_sql(text("SELECT * FROM v_greenhouse_stats WHERE parameter_name = 'temperature'"), engine)
+    try:
+        metrics_summary = ti.xcom_pull(task_ids='anomaly_detection', key='metrics')
+        log.info(f"Metrics retrieved: DBSCAN F1={metrics_summary['dbscan']['f1_score']:.4f}, "
+                f"I-Forest F1={metrics_summary['iforest']['f1_score']:.4f}")
+    except Exception as e:
+        log.error(f"Failed to retrieve metrics: {e}")
+        raise
     
-    if not avg_data.empty:
-        plt.figure(figsize=(8, 5))
-        plt.bar(avg_data['greenhouse_zone'], avg_data['avg_value'], color=['#2ecc71', '#3498db'])
-        plt.title('Temperatura Media per Serra (Dati Puliti)')
-        plt.ylabel('Gradi Celsius (°C)')
-        plt.savefig(f'{output_dir}/greenhouse_climate_report.png')
-        plt.close()
-
-    metrics_df = pd.read_sql(text("SELECT * FROM metrics_log ORDER BY execution_date DESC LIMIT 10"), engine)
-    if not metrics_df.empty:
-        plt.figure(figsize=(10, 6))
-        for algo in metrics_df['algorithm_name'].unique():
-            subset = metrics_df[metrics_df['algorithm_name'] == algo]
-            plt.plot(subset['execution_date'], subset['f1_score'], marker='o', label=algo)
-        plt.title('Andamento Performance Modelli (F1-Score)')
-        plt.legend()
-        plt.savefig(f'{output_dir}/performance_dashboard.png')
-        plt.close()
+    # ===== 2. Leggi dati dal database =====
+    log.info("Reading data from PostgreSQL...")
+    engine = create_engine(DB_CONN)
+    
+    try:
+        df = pd.read_sql(text("""
+            SELECT 
+                cm.id_sensor,
+                cm.day_time,
+                cm.parameter_name,
+                cm.value,
+                cm.anomaly,
+                cm.anomaly_detected_by_dbscan,
+                COALESCE(cm.anomaly_detected_by_dbscan, FALSE) as anomaly_iforest
+            FROM sensor_measurements_clean cm
+            ORDER BY cm.day_time
+        """), engine)
         
-    print(f"Report salvati con successo in {output_dir}")
+        log.info(f"Loaded {len(df)} records from database")
+    except Exception as e:
+        log.error(f"Failed to read from database: {e}")
+        raise
+    
+    if df.empty:
+        log.error("No data available in database")
+        raise ValueError("No data in sensor_measurements_clean")
+    
+    # ===== 3. Genera GRAFICI ESSENZIALI =====
+    
+    
+    # GRAFICO 1: Confusion Matrix
+    log.info("[1/5] Generating Confusion Matrix...")
+    try:
+        plot_confusion_matrix_heatmap(
+            y_true=df['anomaly'].astype(bool),
+            y_pred_dbscan=df['anomaly_detected_by_dbscan'].fillna(False).astype(bool),
+            y_pred_iforest=df['anomaly_iforest'].fillna(False).astype(bool),
+            output_dir=output_dir
+        )
+    except Exception as e:
+        log.error(f"Failed to generate confusion matrix: {e}")
+    
+    # GRAFICO 2: Algorithm Comparison Table
+    log.info("[2/5] Generating Algorithm Comparison Table...")
+    try:
+        plot_algorithm_comparison_table(
+            metrics_dbscan=metrics_summary['dbscan'],
+            metrics_iforest=metrics_summary['iforest'],
+            output_dir=output_dir
+        )
+    except Exception as e:
+        log.error(f"Failed to generate comparison table: {e}")
+    
+    # GRAFICO 3: Scatter Plots per Parametro
+    log.info("[3/5] Generating Scatter Plots by Parameter...")
+    try:
+        for param in sorted(df['parameter_name'].unique()):
+            # 1. Filtra per il parametro attuale
+            df_param = df[df['parameter_name'] == param]
+            
+            # 2. Logica di campionamento condizionale
+            if len(df_param) > 1000:
+                # Se sono tanti (es. Temperatura), campioniamo a 1000
+                df_to_plot = df_param.sample(n=1000, random_state=42).sort_index()
+                log.info(f"   -> {param}: Sampling 1000/{len(df_param)} points")
+            else:
+                # Se sono pochi (es. pH), li usiamo TUTTI
+                df_to_plot = df_param.sort_index()
+                log.info(f"   -> {param}: Using all {len(df_param)} points")
+            
+            # 3. Genera il grafico
+            plot_anomaly_scatter_by_parameter(df_to_plot, param, output_dir)
+            
+    except Exception as e:
+        log.error(f"Failed to generate scatter plots: {e}")
+    
+    # GRAFICO 4: Precision-Recall Curves
+    log.info("[4/5] Generating Precision-Recall Curves...")
+    try:
+        plot_precision_recall_curves(
+            y_true=df['anomaly'].astype(bool),
+            y_pred_dbscan=df['anomaly_detected_by_dbscan'].fillna(False).astype(bool),
+            y_pred_iforest=df['anomaly_iforest'].fillna(False).astype(bool),
+            output_dir=output_dir
+        )
+    except Exception as e:
+        log.error(f"Failed to generate PR curves: {e}")
+    
+    # GRAFICO 5: Distribuzioni Parametri
+    log.info("[5/5] Generating Parameter Distributions...")
+    try:
+        plot_parameter_distributions(df, output_dir)
+    except Exception as e:
+        log.error(f"Failed to generate distributions: {e}")
+    
+    # ===== 4. Salva metriche nel database =====
+    log.info("=" * 60)
+    log.info("SAVING METRICS TO DATABASE")
+    log.info("=" * 60)
+    
+    try:
+        # Salva DBSCAN
+        insert_query_dbscan = text("""
+            INSERT INTO metrics_log 
+            (algorithm_name, execution_time, true_positives, false_positives, 
+             false_negatives, precision, recall, f1_score)
+            VALUES ('DBSCAN', :exec_time, :tp, :fp, :fn, :precision, :recall, :f1)
+        """)
+        
+        with engine.connect() as conn:
+            conn.execute(insert_query_dbscan, {
+                'exec_time': metrics_summary['execution_time'],
+                'tp': metrics_summary['dbscan']['tp'],
+                'fp': metrics_summary['dbscan']['fp'],
+                'fn': metrics_summary['dbscan']['fn'],
+                'precision': metrics_summary['dbscan']['precision'],
+                'recall': metrics_summary['dbscan']['recall'],
+                'f1': metrics_summary['dbscan']['f1_score']
+            })
+            conn.commit()
+        insert_query_iforest = text("""
+            INSERT INTO metrics_log 
+            (algorithm_name, execution_time, true_positives, false_positives, 
+             false_negatives, precision, recall, f1_score)
+            VALUES ('Isolation Forest', :exec_time, :tp, :fp, :fn, :precision, :recall, :f1)
+        """)
+        
+        with engine.connect() as conn:
+            conn.execute(insert_query_iforest, {
+                'exec_time': metrics_summary['execution_time'],
+                'tp': metrics_summary['iforest']['tp'],
+                'fp': metrics_summary['iforest']['fp'],
+                'fn': metrics_summary['iforest']['fn'],
+                'precision': metrics_summary['iforest']['precision'],
+                'recall': metrics_summary['iforest']['recall'],
+                'f1': metrics_summary['iforest']['f1_score']
+            })
+            conn.commit()
+        
+        log.info("✓ Metrics saved to database")
+    except Exception as e:
+        log.error(f"Failed to save metrics: {e}")
+    
+  
+
 
 with DAG(
     dag_id="greenhouse_pipeline",
@@ -357,5 +697,4 @@ with DAG(
         task_id="generate_report",
         python_callable= generate_report
     )
-
     task_generate >> task_load >> task_clean >> task_anomaly >> task_save >> task_report

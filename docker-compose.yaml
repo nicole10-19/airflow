@@ -14,7 +14,7 @@ x-airflow-common:
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
     AIRFLOW__CORE__LOAD_EXAMPLES: 'true'
     AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
-    _PIP_ADDITIONAL_REQUIREMENTS: "scikit-learn==1.0.2 pandas sqlalchemy psycopg2-binary matplotlib"
+    _PIP_ADDITIONAL_REQUIREMENTS: "scikit-learn==1.0.2 pandas sqlalchemy psycopg2-binary matplotlib seaborn"
   volumes:
     - ./dags:/opt/airflow/dags
     - ./logs:/opt/airflow/logs
