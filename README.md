@@ -43,7 +43,7 @@ Questa pipeline utilizza Apache Airflow (via Docker Compose) per simulare, proce
   Algoritmo eccellente per anomalie di densità, sensibile ad anomalie locali con parametro eps controllabile
 
 ### Isolation Forest(Ensemble Method)
-algoritmo ottimo per anomalie globali, scalabile a dataset grandi e non richiede una definizione di distanza
+  Algoritmo ottimo per anomalie globali, scalabile a dataset grandi e non richiede una definizione di distanza
 
 ### ObiettivoConfrontare 
 Due approcci diversi (ma complementari) per validare la robustezza delle anomalie rilevate. 
