@@ -71,7 +71,6 @@ def plot_confusion_matrix_heatmap(y_true, y_pred_dbscan, y_pred_iforest, output_
     plt.tight_layout()
     plt.savefig(f'{output_dir}/01_confusion_matrix.png', dpi=300, bbox_inches='tight')
     plt.close()
-    log.info("✓ Saved: 01_confusion_matrix.png")
  
  
 def plot_algorithm_comparison_table(metrics_dbscan, metrics_iforest, output_dir):
@@ -158,7 +157,6 @@ def plot_algorithm_comparison_table(metrics_dbscan, metrics_iforest, output_dir)
     
     # Salvataggio anche in CSV
     df_comparison.to_csv(f'{output_dir}/algorithm_comparison.csv', index=False, sep=';')
-    log.info("✓ Saved: 02_algorithm_comparison.png")
  
  
 def plot_anomaly_scatter_by_parameter(df, parameter, output_dir):
@@ -272,7 +270,6 @@ def plot_parameter_distributions(df, output_dir):
     plt.savefig(f'{output_dir}/05_distributions.png', dpi=300, bbox_inches='tight')
     plt.close()
     
-    log.info("✓ Saved: 05_distributions.png")
 
 def generate_data():
     # Task 1 --> Generazione dataset simulato di sensori tramite la chiamata a sensor_simulator.run() con scale_factor=3.0 
@@ -285,7 +282,6 @@ def load_data():
     # Task 2 -->legge il CSV generato dal simulatore e ritorna il DataFrame in formato JSON
     # così che Airflow può passarlo alla task successiva
     df = pd.read_csv("/opt/airflow/data/sensori.csv", sep=";")
-    log.info(f"Caricati {len(df)} record dal CSV")
     return df.to_json() 
 
     # NB: viene utilizzato '**kwargs' perchè la funzione può ricevere un numero variabile di argomenti
@@ -380,15 +376,15 @@ def anomaly_detection(eps= 0.1, min_samples= 2, contamination= 0.05, **kwargs):
         scaler = StandardScaler()
         df_param['value_normalized'] = scaler.fit_transform(df_param[['value']])
 
-        # --- ALGORITMO 1: DBSCAN ---
+        # Algoritmo 1 --> DBSCAN
         dbscan = DBSCAN(eps=eps, min_samples= min_samples)
         df_param['anomaly_detected_by_dbscan'] = (dbscan.fit_predict(df_param[['value_normalized']]) == -1)
 
-        # --- ALGORITMO 2: ISOLATION FOREST ---
+        # Algoritmo 2 --> Isolation Forest
         iso_forest = IsolationForest(contamination=contamination , random_state=42)
         df_param['anomaly_iforest'] = (iso_forest.fit_predict(df_param[['value_normalized']]) == -1)
 
-        # ---  CONFRONTO CON GROUND TRUTH ---
+        # Confronto con Ground Truth
         for idx, row in df_param.iterrows():
             real = bool(row['anomaly'])
 
@@ -420,7 +416,7 @@ def anomaly_detection(eps= 0.1, min_samples= 2, contamination= 0.05, **kwargs):
 
     df_final = pd.concat(result, ignore_index=True)
 
-    # CALCOLO METRICHE FINALI (usando la funzione esterna calc_performance_metrics)
+    # Calcolo delle metriche finali (usando la funzione esterna calc_performance_metrics)
     p_db, r_db, f1_db = calc_performance_metrics(stats['dbscan']['tp'], stats['dbscan']['fp'], stats['dbscan']['fn'])
     p_if, r_if, f1_if = calc_performance_metrics(stats['iforest']['tp'], stats['iforest']['fp'], stats['iforest']['fn'])
 
@@ -441,7 +437,6 @@ def anomaly_detection(eps= 0.1, min_samples= 2, contamination= 0.05, **kwargs):
     ti.xcom_push(key="anomaly_df", value=df_final.to_json())
     ti.xcom_push(key="metrics", value=metrics_summary)
 
-    log.info(f"Analisi completata in {execution_time:.2f}s. DBSCAN F1: {f1_db:.3f}, I-Forest F1: {f1_if:.3f}")
 
 def save_results(**kwargs):
 
@@ -450,6 +445,7 @@ def save_results(**kwargs):
     #   1- sensor_measurements_clean 
     #   2- sensor_measurements_anomalies
     #   3- sensor_measurements_discarded
+
     ti = kwargs['ti']
 
     df_processed = pd.read_json(ti.xcom_pull(task_ids='anomaly_detection', key="anomaly_df"))
@@ -478,7 +474,7 @@ def save_results(**kwargs):
         df_discarded_out = df_discarded[discard_cols].copy()
         df_discarded_out.to_sql('sensor_measurements_discarded', engine, if_exists='append', index=False)
         
-        log.info("Dati dei sensori salvati correttamente nelle 3 tabelle.")
+        log.info("Dati dei sensori salvati correttamente")
     except Exception as e:
         log.error(f"Errore salvataggio tabelle sensori: {e}")
         raise
@@ -504,7 +500,7 @@ def save_results(**kwargs):
         # Salvataggio su PostgreSQL
         try:
             df_metrics.to_sql('metrics_log', engine, if_exists='append', index=False)
-            log.info("Metriche comparative salvate in PostgreSQL (2 righe).")
+            log.info("Metriche comparative salvate.")
         except Exception as e:
             log.error(f"Errore salvataggio metriche PostgreSQL: {e}")
 
@@ -534,8 +530,6 @@ def generate_report(**kwargs):
     
     ti = kwargs['ti']
     
-    # ===== 1. Recupera dati da XCom =====
-    log.info("Retrieving data from previous tasks...")
     
     try:
         metrics_summary = ti.xcom_pull(task_ids='anomaly_detection', key='metrics')
@@ -545,8 +539,6 @@ def generate_report(**kwargs):
         log.error(f"Failed to retrieve metrics: {e}")
         raise
     
-    # ===== 2. Leggi dati dal database =====
-    log.info("Reading data from PostgreSQL...")
     engine = create_engine(DB_CONN)
     
     try:
@@ -562,8 +554,6 @@ def generate_report(**kwargs):
             FROM sensor_measurements_clean cm
             ORDER BY cm.day_time
         """), engine)
-        
-        log.info(f"Loaded {len(df)} records from database")
     except Exception as e:
         log.error(f"Failed to read from database: {e}")
         raise
@@ -572,11 +562,10 @@ def generate_report(**kwargs):
         log.error("No data available in database")
         raise ValueError("No data in sensor_measurements_clean")
     
-    # ===== 3. Genera GRAFICI ESSENZIALI =====
     
     
-    # GRAFICO 1: Confusion Matrix
-    log.info("[1/5] Generating Confusion Matrix...")
+    # Grafico 1-->  Confusion Matrix
+
     try:
         plot_confusion_matrix_heatmap(
             y_true=df['anomaly'].astype(bool),
@@ -587,8 +576,7 @@ def generate_report(**kwargs):
     except Exception as e:
         log.error(f"Failed to generate confusion matrix: {e}")
     
-    # GRAFICO 2: Algorithm Comparison Table
-    log.info("[2/5] Generating Algorithm Comparison Table...")
+    # Grafico 2--> Algorithm Comparison Table
     try:
         plot_algorithm_comparison_table(
             metrics_dbscan=metrics_summary['dbscan'],
@@ -598,26 +586,22 @@ def generate_report(**kwargs):
     except Exception as e:
         log.error(f"Failed to generate comparison table: {e}")
     
-    # GRAFICO 3: Scatter Plots per Parametro
-    log.info("[3/5] Generating Scatter Plots by Parameter...")
+    # Grafico 3-->  Scatter Plots per Parametro
     try:
         for param in sorted(df['parameter_name'].unique()):
             df_param = df[df['parameter_name'] == param]
             
             # Campiona se il dataset è molto grande (evita grafici troppo pesanti)
             if len(df_param) > 1000:
-                df_to_plot = df_param.sample(n=1000, random_state=42).sort_index()
-                log.info(f"   -> {param}: Sampling 1000/{len(df_param)} points")
+                df_to_plot = df_param.sample(n=1000, random_state=42).sort_index()   
             else:
                 df_to_plot = df_param.sort_index()
-                log.info(f"   -> {param}: Using all {len(df_param)} points")
-            
             plot_anomaly_scatter_by_parameter(df_to_plot, param, output_dir)
-            
+
     except Exception as e:
         log.error(f"Failed to generate scatter plots: {e}")
-    
-    log.info("[4/5] Generating Precision-Recall Curves...")
+
+
     try:
         plot_precision_recall_curves(
             y_true=df['anomaly'].astype(bool),
@@ -628,16 +612,13 @@ def generate_report(**kwargs):
     except Exception as e:
         log.error(f"Failed to generate PR curves: {e}")
     
-    log.info("[5/5] Generating Parameter Distributions...")
     try:
         plot_parameter_distributions(df, output_dir)
     except Exception as e:
         log.error(f"Failed to generate distributions: {e}")
     
     #  Salvataggio metriche nel database 
-    log.info("=" * 60)
-    log.info("SAVING METRICS TO DATABASE")
-    log.info("=" * 60)
+    log.info("Salvataggio delle metriche nel DB")
     
     try:
         insert_query_dbscan = text("""
@@ -677,7 +658,7 @@ def generate_report(**kwargs):
             })
             conn.commit()
         
-        log.info("✓ Metrics saved to database")
+        log.info("Metriche salvate nel DB")
     except Exception as e:
         log.error(f"Failed to save metrics: {e}")
     

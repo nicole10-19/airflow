@@ -80,9 +80,11 @@ def generate_meas(sensor, p, start, is_night=False):
     # NB: Un caso particolare nei sensori è il livello di CO2, che permette di avere solo risultati interi, 
     #   in quanto la misurazione viene fatta in ppm (Parti per milione).
     
-    # La funzione resituirà un dizionario con una misurazione, ogni misurazione sarà composta dall'id del sensore, l'ora e la data della misurazione,
-    #  il nome del parametro che va a verificare il valore del parametro e anomaly impostato a False perché viene passato ranges[p] 
-    # (ovvero i range con le misurazioni ottimali). L'asterisco prima di ranges[p] permette di dividere i valori, in due valori separati
+    # La funzione utilizza range normali corrispondenti al ciclo giorno/notte e ritorna un dizionario
+    # con tutti i metadati della misuraione
+
+    # Vengono passati alla funzione i seguenti paeametri : ID del sensore, nome del parametro da misurare, timestamp della misurazione e il booleano
+    # che permette di capire se la misurazione avviene di notte (True) o di giorno (False)
 
     if is_night:
         range_to_use = ranges_night[p]
@@ -111,8 +113,9 @@ def generate_meas(sensor, p, start, is_night=False):
 
 def outlier_meas(sensor, p, start, outlier_high_prob=0.5, is_night=False):
 
-    # Genera valori outlier con una probabilità del 50% per valori sopra al range ottimale e una probabilità del 50% 
-    # per valori sotto al range ottimale. Il caso del livello di CO2 viene separato dagli altri con la stessa logica della funzione precedente.
+    # La funzione genera una misurazione anomala per simulare malfunzionamenti del sensore. 
+    # Riceve come parametro 'outlier_high_prob' che è la probabilità di generare valori alti, utilizzando i range
+    # anomali 'ranges_high_*' o 'ranges_low_*'
 
     # Anomaly è impostato a true in quanto si è verificato un 'errore' da parte del sensore
     if is_night:
@@ -121,6 +124,7 @@ def outlier_meas(sensor, p, start, outlier_high_prob=0.5, is_night=False):
         range_to_use = ranges_day[p]
 
 
+    # Anomaly è impostato a true in quanto si è verificato un 'errore' da parte del sensore
     if random.random()< outlier_high_prob:
 
         if p == "CO2_level":
@@ -160,7 +164,7 @@ def outlier_meas(sensor, p, start, outlier_high_prob=0.5, is_night=False):
 
 def null_meas(sensor, p, start):
 
-    # Crea valori nulli  e restituisce un dizionario con 'anomaly' impostato a True, in quanto il valore restituito è nullo  
+    # La funzione genera valori nulli  e restituisce un dizionario con 'anomaly' impostato a True, in quanto il valore restituito è nullo  
     measurement = {
     "id_sensor": sensor,
     "day_time": start,
@@ -175,7 +179,7 @@ def null_meas(sensor, p, start):
 
 # temperature, CO2_level, ventilation --> ogni 15 secondi 
 # humidity --> ogni 30 secondi
-# ph_level --> 1 volta ogni 12 ore ( ogni 43200 secondi)
+# ph_level --> una volta ogni 12 ore ( ogni 43200 secondi)
 greenhouses = {
     "first_greenhouse" : {
         "S0001": ["temperature", 15,2880],
@@ -195,7 +199,17 @@ greenhouses = {
 
 }
 
-def run(outlier_rate=0.05, null_rate=0.02, outlier_high_prob=0.5, scale_factor=1.0, output_path="/opt/airflow/data/sensori.csv"):     
+def run(outlier_rate=0.05, null_rate=0.02, outlier_high_prob=0.5, scale_factor=1.0, output_path="/opt/airflow/data/sensori.csv"):  
+
+
+    # La funzione permette di orchestrare la simulazione e il salvataggio dei dati.
+    # Genera misurazioni per tutti i sensori in tutte le serre applicando il ciclo giorno/notte, tasso di anomalie intenzionali,
+    # tasso di valori nulli e scale factor per variare la dimensione del dataset. 
+
+    # Accetta come argomenti: la percentuale di misurazioni anomale (outlier_rate), percentuale di valori nulli (null_rate), probabilità di outlier alto vs basso (outlier_high_prob),
+    # moltiplicatore per numero di misurazioni (scale_factor) e il percorso del file CSV di output (output_path)
+
+
     timestamps = {}
     for greenhouse in greenhouses.values():
         for id_sensor in greenhouse:
@@ -227,12 +241,13 @@ def run(outlier_rate=0.05, null_rate=0.02, outlier_high_prob=0.5, scale_factor=1
 
                 # Aggiorna il timestamps del sensore
                 timestamps[id_sensor] = timestamps[id_sensor] + datetime.timedelta(seconds=intervallo)
-                
+
+    # Conversione dei valori None in stringa 'null' per la rappresentazione CSV            
     for riga in misurazioni:
         for chiave, valore in riga.items():
             if valore is None:
                 riga[chiave] = "null"
 
-    # Salvataggio finale identico al tuo
+    # Creazione DataFrame e salvataggio in CSV
     df = pd.DataFrame(misurazioni).sort_values(by=("day_time"))
     df.to_csv(output_path, index=False, sep=";")
