@@ -1,6 +1,7 @@
 # Greenhouse Airflow Pipeline - Istruzioni di Avvio
-
-Questa pipeline utilizza Apache Airflow (via Docker Compose) per simulare, processare e salvare dati di sensori di un sistema di serre a temperatura controllata.
+Questo progetto implemena un sistema automatizzato di **monitoraggio e anomaly detection** 
+per serre a temperatura controllata. La pipeline rileva malfunzionamenti dei sensori e 
+anomalie ambientali comparando due algoritmi di ML (DBSCAN e Isolation Forest) per validare la robustezza delle rilevazioni.
 
 ## Avvio
 1. Clona o scarica questa cartella sul tuo PC.
