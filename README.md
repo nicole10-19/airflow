@@ -4,8 +4,9 @@ Questa pipeline utilizza Apache Airflow (via Docker Compose) per simulare, proce
 
 ## Avvio
 1. Clona o scarica questa cartella sul tuo PC.
-2. Da terminale, posizionarsi nella cartella `airflow` e lanciare:
-   ```powershell
+2. Da terminale, posizionarsi nella cartella `airflow`, configurare le variabili di ambiente e avviare i servizi con Docker Compose:
+   ```bash
+   cp .env.example .env
    docker compose up --build
    ```
 
@@ -27,5 +28,40 @@ Questa pipeline utilizza Apache Airflow (via Docker Compose) per simulare, proce
 - `init-db.sql`: Crea tabelle su Postgres
 - `requirements.txt`: Dipendenze di Python 
 
+## Flusso di elaborazione
 
-- I dati vengono salvati su Postgres in tre tabelle: `sensor_measurements_clean`, `sensor_measurements_anomalies`, `sensor_measurements_discarded`.
+1. **Generazione dati** : ~19.000 record di sensori simulati (3 giorni)
+2. **Caricamento CSV** : legge i dati in memoria
+3. **Pulizia dati** : rimuove valori nulli/invalidi
+4. **Rilevazione anomalie** : applica DBSCAN e Isolation Forest
+5. **Salvataggio i risultati** : popola le tabelle di PostgreSQL
+6. **Generazione report** : crea 5 grafici di analisi 
+
+## Scelta degli algoritmi
+
+### DBSCAN (Density-Based Spatial Clustering)
+  Algoritmo eccellente per anomalie di densità, sensibile ad anomalie locali con parametro eps controllabile
+
+### Isolation Forest(Ensemble Method)
+algoritmo ottimo per anomalie globali, scalabile a dataset grandi e non richiede una definizione di distanza
+
+### ObiettivoConfrontare 
+Due approcci diversi (ma complementari) per validare la robustezza delle anomalie rilevate. 
+Se entrambi concordano su un'anomalia, è **probabilmente vera**. Se discordano, è **borderline** e quindi richiede una **verifica manuale**. 
+
+
+## Risultati e Output
+
+ **Dati in PostgreSQL**
+ - `sensor_measurements_clean` : dati validi 
+ - `sensor_measurements_anomalies` : anomalie rilevate
+ - `sensor_measurements_discarded` : dati scartati
+ - `metrics_log` : metriche di performance
+ 
+ **Grafici per il report**
+- `01_confusion_matrix.png` : Confronto DBSCAN vs Isolation Forest
+- `02_algorithm_comparison.png` : Tabella metriche comparative
+- `03_scatter_*.png` : Scatter plot per parametro (temperature, humidity, etc.)
+- `04_precision_recall.png` : Curve Precision-Recall
+- `05_distributions.png` : Istogrammi distribuzione parametri
+
