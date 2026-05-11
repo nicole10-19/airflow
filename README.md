@@ -1,4 +1,4 @@
-# Greenhouse Airflow Pipeline - Istruzioni di Avvio
+# Greenhouse Airflow Pipeline
 Questo progetto implemena un sistema automatizzato di **monitoraggio e anomaly detection** 
 per serre a temperatura controllata. La pipeline rileva malfunzionamenti dei sensori e 
 anomalie ambientali comparando due algoritmi di ML (DBSCAN e Isolation Forest) per validare la robustezza delle rilevazioni.
