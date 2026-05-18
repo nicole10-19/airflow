@@ -117,11 +117,16 @@ def outlier_meas(sensor, p, start, outlier_high_prob=0.5, is_night=False):
     # Riceve come parametro 'outlier_high_prob' che è la probabilità di generare valori alti, utilizzando i range
     # anomali 'ranges_high_*' o 'ranges_low_*'
 
-    # Anomaly è impostato a true in quanto si è verificato un 'errore' da parte del sensore
     if is_night:
-        range_to_use = ranges_night[p]
+        if random.random() < outlier_high_prob:
+            range_to_use = ranges_high_night[p]
+        else:
+            range_to_use = ranges_low_night[p]
     else:
-        range_to_use = ranges_day[p]
+        if random.random() < outlier_high_prob:
+            range_to_use = ranges_high_day[p]
+        else:
+            range_to_use = ranges_low_day[p]
 
 
     # Anomaly è impostato a true in quanto si è verificato un 'errore' da parte del sensore
@@ -250,4 +255,4 @@ def run(outlier_rate=0.05, null_rate=0.02, outlier_high_prob=0.5, scale_factor=1
 
     # Creazione DataFrame e salvataggio in CSV
     df = pd.DataFrame(misurazioni).sort_values(by=("day_time"))
-    df.to_csv(output_path, index=False, sep=";")
+    df.to_csv(output_path, index=False, sep=";", quoting=1)

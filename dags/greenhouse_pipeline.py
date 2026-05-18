@@ -98,7 +98,7 @@ def plot_algorithm_comparison_table(metrics_dbscan, metrics_iforest, output_dir)
             metrics_iforest['fn'],
             f"{metrics_iforest.get('execution_time', 0) * 1000:.2f}"
         ],
-        'Winner': []
+        'Best': []
     }
     
     # Determina vincitori
@@ -109,13 +109,13 @@ def plot_algorithm_comparison_table(metrics_dbscan, metrics_iforest, output_dir)
             
             # Viene considerato un 'pareggio' se differenza <0.01
             if abs(val_db - val_if) < 0.01:
-                comparison_data['Winner'].append('Tie')
+                comparison_data['Best'].append('Tie')
             elif val_db > val_if:
-                comparison_data['Winner'].append('DBSCAN ✓')
+                comparison_data['Best'].append('DBSCAN ✓')
             else:
-                comparison_data['Winner'].append('I-Forest ✓')
+                comparison_data['Best'].append('I-Forest ✓')
         else:
-            comparison_data['Winner'].append('')
+            comparison_data['Best'].append('')
     
     df_comparison = pd.DataFrame(comparison_data)
     
@@ -194,10 +194,28 @@ def plot_anomaly_scatter_by_parameter(df, parameter, output_dir):
     colors_if = get_color_map(df_param['anomaly'], df_param['anomaly_iforest'])
     ax2.scatter(df_param.index, df_param['value'], c=colors_if, s=60, alpha=0.6, edgecolors='none')
 
-    ax1.set_title(f'DBSCAN - {parameter}', fontweight='bold')
-    ax2.set_title(f'Isolation Forest - {parameter}', fontweight='bold')
+    ax1.set_title(f'DBSCAN - {parameter}', fontweight='bold', fontsize=12)
+    ax1.set_xlabel('Measurement Index', fontsize=10, fontweight='bold')
+    ax1.set_ylabel('Value', fontsize=10, fontweight='bold')
+    ax1.grid(True, alpha=0.3)
     
-    plt.savefig(f'{output_dir}/03_scatter_{parameter}.png', dpi=150) # DPI 150 è sufficiente e più leggero
+    ax2.set_title(f'Isolation Forest - {parameter}', fontweight='bold', fontsize=12)
+    ax2.set_xlabel('Measurement Index', fontsize=10, fontweight='bold')
+    ax2.set_ylabel('Value', fontsize=10, fontweight='bold')
+    ax2.grid(True, alpha=0.3)
+    
+    # Crea legenda personalizzata
+    from matplotlib.patches import Patch
+    legend_elements = [
+        Patch(facecolor='#27ae60', label='TP (True Positive)'),
+        Patch(facecolor='#e74c3c', label='FP (False Positive)'),
+        Patch(facecolor='#3498db', label='TN (True Negative)'),
+        Patch(facecolor='#f39c12', label='FN (False Negative)')
+    ]
+    fig.legend(handles=legend_elements, loc='upper center', bbox_to_anchor=(0.5, -0.02), 
+               ncol=4, fontsize=10, frameon=True)
+    
+    plt.savefig(f'{output_dir}/03_scatter_{parameter}.png', dpi=150, bbox_inches='tight')
     plt.close()
  
 def plot_precision_recall_curves(y_true, y_pred_dbscan, y_pred_iforest, output_dir):
@@ -252,8 +270,8 @@ def plot_parameter_distributions(df, output_dir):
         
         ax.hist(df_param, bins=30, color='#3498db', alpha=0.7, edgecolor='black')
         ax.set_title(f'Distribution - {param}', fontweight='bold', fontsize=11)
-        ax.set_xlabel('Value', fontsize=10)
-        ax.set_ylabel('Frequency', fontsize=10)
+        ax.set_xlabel('Value', fontsize=10, fontweight='bold')
+        ax.set_ylabel('Frequency', fontsize=10, fontweight='bold')
         ax.grid(axis='y', alpha=0.3)
         
        
@@ -363,6 +381,8 @@ def anomaly_detection(eps= 0.1, min_samples= 2, contamination= 0.05, **kwargs):
     parameters = df["parameter_name"].unique()
     result = []
 
+    execution_time_dbscan=0.0
+    execution_time_iforest=0.0
     for param in parameters:
         # Prende solo i dati di quel parametro 
         df_param = df[df["parameter_name"] == param].copy()
@@ -377,13 +397,18 @@ def anomaly_detection(eps= 0.1, min_samples= 2, contamination= 0.05, **kwargs):
         df_param['value_normalized'] = scaler.fit_transform(df_param[['value']])
 
         # Algoritmo 1 --> DBSCAN
+        start_dbscan= time.time()
         dbscan = DBSCAN(eps=eps, min_samples= min_samples)
         df_param['anomaly_detected_by_dbscan'] = (dbscan.fit_predict(df_param[['value_normalized']]) == -1)
 
+        execution_time_dbscan += (time.time() - start_dbscan)
         # Algoritmo 2 --> Isolation Forest
+
+        start_iforest= time.time()
         iso_forest = IsolationForest(contamination=contamination , random_state=42)
         df_param['anomaly_iforest'] = (iso_forest.fit_predict(df_param[['value_normalized']]) == -1)
 
+        execution_time_iforest += (time.time() - start_iforest)
         # Confronto con Ground Truth
         for idx, row in df_param.iterrows():
             real = bool(row['anomaly'])
@@ -420,17 +445,19 @@ def anomaly_detection(eps= 0.1, min_samples= 2, contamination= 0.05, **kwargs):
     p_db, r_db, f1_db = calc_performance_metrics(stats['dbscan']['tp'], stats['dbscan']['fp'], stats['dbscan']['fn'])
     p_if, r_if, f1_if = calc_performance_metrics(stats['iforest']['tp'], stats['iforest']['fp'], stats['iforest']['fn'])
 
-    execution_time = time.time() - start_time
+
 
     metrics_summary = {
-        "execution_time": execution_time,
+        "execution_time": execution_time_dbscan + execution_time_iforest,
         "dbscan": {
             "tp": stats['dbscan']['tp'], "fp": stats['dbscan']['fp'], "fn": stats['dbscan']['fn'],
-            "precision": p_db, "recall": r_db, "f1_score": f1_db
+            "precision": p_db, "recall": r_db, "f1_score": f1_db,
+            "execution_time": execution_time_dbscan
         },
         "iforest": {
             "tp": stats['iforest']['tp'], "fp": stats['iforest']['fp'], "fn": stats['iforest']['fn'],
-            "precision": p_if, "recall": r_if, "f1_score": f1_if
+            "precision": p_if, "recall": r_if, "f1_score": f1_if,
+            "execution_time" : execution_time_iforest
         }
     }
 
@@ -455,17 +482,20 @@ def save_results(**kwargs):
     engine = create_engine(DB_CONN)
 
     columns_base = ['id_sensor', 'day_time', 'parameter_name', 'value',
-                    'anomaly', 'anomaly_detected_by_dbscan', 'confidence_score']
+                    'anomaly', 'anomaly_detected_by_dbscan', 'anomaly_iforest', 'confidence_score']
 
     
     try:
+        df_all = df_processed[columns_base].copy()
+        df_all.to_sql('sensor_measurements', engine, if_exists='append', index=False)
+    
         # Tabella 1 Dati sani 
-        df_clean_out = df_processed[~df_processed['anomaly_detected_by_dbscan']][columns_base].copy()
+        df_clean_out = df_processed[~df_processed['anomaly_detected_by_dbscan'] & ~df_processed['anomaly_iforest']][columns_base].copy()
         df_clean_out.to_sql('sensor_measurements_clean', engine, if_exists='append', index=False)
 
         # Tabella 2 Anomalie
         df_anomalies = df_processed[
-            df_processed['anomaly_detected_by_dbscan'] | df_processed['anomaly']
+            df_processed['anomaly_detected_by_dbscan'] | df_processed['anomaly_iforest'] | df_processed['anomaly']
         ][columns_base].copy()
         df_anomalies.to_sql('sensor_measurements_anomalies', engine, if_exists='append', index=False)
 
@@ -544,15 +574,15 @@ def generate_report(**kwargs):
     try:
         df = pd.read_sql(text("""
             SELECT 
-                cm.id_sensor,
-                cm.day_time,
-                cm.parameter_name,
-                cm.value,
-                cm.anomaly,
-                cm.anomaly_detected_by_dbscan,
-                COALESCE(cm.anomaly_detected_by_dbscan, FALSE) as anomaly_iforest
-            FROM sensor_measurements_clean cm
-            ORDER BY cm.day_time
+                sm.id_sensor,
+                sm.day_time,
+                sm.parameter_name,
+                sm.value,
+                sm.anomaly,
+                sm.anomaly_detected_by_dbscan,
+                sm.anomaly_iforest
+            FROM sensor_measurements sm
+            ORDER BY sm.day_time
         """), engine)
     except Exception as e:
         log.error(f"Failed to read from database: {e}")

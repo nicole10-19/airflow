@@ -12,6 +12,7 @@ CREATE TABLE sensor_measurements (
     value FLOAT,
     anomaly BOOLEAN,
     anomaly_detected_by_dbscan BOOLEAN,
+    anomaly_iforest BOOLEAN,
     confidence_score FLOAT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -27,6 +28,7 @@ CREATE TABLE sensor_measurements_clean (
     value FLOAT NOT NULL,
     anomaly BOOLEAN DEFAULT FALSE,
     anomaly_detected_by_dbscan BOOLEAN DEFAULT FALSE,
+    anomaly_iforest BOOLEAN DEFAULT FALSE,
     confidence_score FLOAT DEFAULT 0.0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -42,6 +44,7 @@ CREATE TABLE sensor_measurements_anomalies (
     value FLOAT,
     anomaly BOOLEAN DEFAULT TRUE,
     anomaly_detected_by_dbscan BOOLEAN DEFAULT TRUE,
+    anomaly_iforest BOOLEAN DEFAULT FALSE,
     confidence_score FLOAT DEFAULT 0.0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -52,8 +55,8 @@ CREATE TABLE sensor_measurements_anomalies (
 -- Questi dati non passano mai ad anomaly_detection.
 CREATE TABLE sensor_measurements_discarded (
     id SERIAL PRIMARY KEY,
-    id_sensor VARCHAR(50),           -- può essere NULL: era il campo mancante
-    day_time TIMESTAMP,              -- può essere NULL: era il campo mancante
+    id_sensor VARCHAR(50),           
+    day_time TIMESTAMP,             
     parameter_name VARCHAR(50),
     value VARCHAR(50),               -- VARCHAR per conservare il valore originale
                                      -- anche se non era convertibile a float
